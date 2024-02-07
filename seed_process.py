@@ -1,4 +1,5 @@
 import geopandas as gpd
+import pandas as pd
 from psycopg2 import connect
 from sqlalchemy import create_engine
 from datetime import datetime
@@ -19,17 +20,18 @@ class SeedProcess():
     """
 
     def __init__(self, db_url, seed_table="public.sementes_pts", sector_table="public.setores_censitarios",
-                 buffer_start=10, buffer_step=10, limit_to_stop=5000):
+                 buffer_start=10, buffer_step=10, limit_to_stop=5000, district_code=None):
 
         self._dburl = db_url
         self._engine = create_engine(db_url)
         self._seed_table = seed_table
         self._sector_table = sector_table
+        self._district_code = district_code
 
         self._buffer_start=buffer_start
         self._buffer_step=buffer_step
         self._limit_to_stop=limit_to_stop
-        self._merged_sectors=None
+        self._output_sectors=None
 
     def __read_seed_by_id(self, seed_id):
         """
@@ -48,12 +50,26 @@ class SeedProcess():
         Prerequisites:
          - The name from "_seed_table" table must exist in the database and have data.
         """
-        self._seeds = {}
-        sql = f"SELECT id FROM {self._seed_table} ORDER BY ordem::integer ASC"
-        cur = self._conn.cursor()
-        cur.execute(sql)
-        results=cur.fetchall()
-        self._seeds=list(results)
+        try:
+            self._seeds = {}
+            where=""
+            if self._district_code is not None:
+                where=f"WHERE cd_dist='{self._district_code}'"
+            
+            sql = f"SELECT id FROM {self._seed_table} {where} ORDER BY ordem::integer ASC"
+            self._conn = connect(self._dburl)
+            cur = self._conn.cursor()
+            cur.execute(sql)
+            results=cur.fetchall()
+            self._seeds=list(results)
+            cur.close()
+        except Exception as e:
+            print('Error on read seed indentifiers')
+            print(e.__str__())
+            raise e
+        finally:
+            if not self._conn.closed:
+                self._conn.close()
 
     def __read_sectors(self):
         """
@@ -63,7 +79,12 @@ class SeedProcess():
          - The name from "_sector_table" table must exist in the database and have data.
         """
         self._sectors = {}
-        sql = f"SELECT id as sec_id, cd_dist, cadastrad::integer as num_cadastrados, domicilios::integer as num_domicilios, geom as geometry FROM {self._sector_table}"
+        where=""
+        if self._district_code is not None:
+            where=f"WHERE cd_dist='{self._district_code}'"
+
+        sql = f"""SELECT id as sec_id, cd_dist, cd_setor, cadastrad::integer as num_cadastrados,
+        domicilios::integer as num_domicilios, geom as geometry FROM {self._sector_table} {where}"""
         self._sectors = gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
 
     def __get_sectors_by_seed(self, seed_id):
@@ -89,40 +110,33 @@ class SeedProcess():
         total=0
         candidate_sectors=None
 
-        while(total<=self._limit_to_stop):
-            a_seed['geometry'] = a_seed.geometry.buffer(buffer_value)
-            candidate_sectors = gpd.sjoin(sectors_by_dist, a_seed, how='inner', predicate='intersects')
-            indexs = list()
-            for index, row in candidate_sectors.iterrows():
-                total=total+row['num_cadastrados']
-                indexs.append(row['sec_id'])
-            # plus buffer to try next
-            buffer_value=buffer_value+self._buffer_step
-        
-        # remove the selected sectors from main set of data
-        self._sectors=self._sectors.loc[self._sectors['cd_setor'].isin(candidate_sectors['cd_setor'])]
+        if sectors_by_dist.size>0:
+
+            while(total<=self._limit_to_stop):
+                a_seed['geometry'] = a_seed.geometry.buffer(buffer_value)
+                candidate_sectors = gpd.sjoin(sectors_by_dist, a_seed, how='inner', predicate='intersects')
+                for index, row in candidate_sectors.iterrows():
+                    total=total+row['num_cadastrados']
+                # plus buffer to try next
+                buffer_value=buffer_value+self._buffer_step
+            
+            # remove the selected sectors from main set of data
+            self._sectors=self._sectors.loc[~self._sectors['cd_setor'].isin(candidate_sectors['cd_setor'])]
         
         return candidate_sectors
-
-        # print("="*50)
-        # print("seed_id="+str(seed_id))
-        # print(','.candidate_sectors(map(str,indexs)))
-        # print("total="+str(total))
-        # print("buffer="+str(buffer_value))
-        # print("="*50)
 
     def join_sectors(self):
 
         for seed_id in self._seeds:
             sectors=self.__get_sectors_by_seed(seed_id[0])
+            if sectors is None: continue
             sectors['seed_id'] = seed_id[0]
-            self._merged_sectors=self._merged_sectors.merge(sectors) if self._merged_sectors is not None else sectors
+            self._output_sectors = pd.concat([self._output_sectors, sectors]) if self._output_sectors is not None else sectors
             
-        self._merged_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine)
+        self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine)
 
     def execute(self):
         try:
-            self._conn = connect(self._dburl)
             print("Starting at: "+datetime.now().strftime("%d/%m/%YT%H:%M:%S"))
 
             self.__read_sectors()
@@ -131,9 +145,8 @@ class SeedProcess():
             self.join_sectors()
 
             print("Finished in: "+datetime.now().strftime("%d/%m/%YT%H:%M:%S"))
-            self._conn.commit()
+
         except Exception as e:
-            self._conn.rollback()
             print('Error on seed process')
             print(e.__str__())
             raise e
@@ -143,5 +156,5 @@ class SeedProcess():
 import warnings
 warnings.filterwarnings("ignore")
 db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
-sp = SeedProcess(db_url=db)
+sp = SeedProcess(db_url=db, district_code='355030826')
 sp.execute()
