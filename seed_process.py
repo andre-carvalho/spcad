@@ -41,7 +41,7 @@ class SeedProcess():
         Prerequisites:
          - The name from "_seed_table" table must exist in the database and have data.
         """
-        sql = f"SELECT id, cd_dist, cd_setor, geom as geometry FROM {self._seed_table} WHERE id={seed_id}"
+        sql = f"SELECT id as seed_id, cd_dist, cd_setor, geom as geometry FROM {self._seed_table} WHERE id={seed_id}"
         return gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
 
     def __load_seed_identifiers(self):
@@ -103,32 +103,49 @@ class SeedProcess():
         # Given a seed id, read one seed object as GeoDataFrame
         a_seed=self.__read_seed_by_id(seed_id)
         
-        # abort if current seed is in the sector that was used befor
-        a_seed=a_seed.loc[~a_seed['cd_setor'].isin(self._output_sectors['cd_setor_left'])] if self._output_sectors is not None else a_seed
+        # abort if the current seed sector code is in the list of already selected sectors.
+        a_seed=a_seed.loc[~a_seed['cd_setor'].isin(self._output_sectors['cd_setor'])] if self._output_sectors is not None else a_seed
         if a_seed is None or a_seed.size==0:
             return None, None
         
         # And get the sectors where seed is inside
         sectors_by_district=self._sectors.loc[self._sectors['cd_dist'].isin(a_seed['cd_dist'])]
 
+        # clean seed columns
+        a_seed.pop('cd_dist')
+        a_seed.pop('cd_setor')
+
         # controls with initial values
         buffer_value=total=0
         candidate_sectors=None
         the_end=False
+        selected_sectors=[]
+        # used to sum the total from a previous selected sector list
+        def get_total_from_selected_sectors(ss):
+            total=0
+            for a_sec in ss:
+                total+=a_sec['num_domicilios']
+            return total
+        # used to find a candidate sector in selected sector list
+        def find_in_selected_sectors(ss, r):
+            for a_sec in ss:
+                if r['sec_id']==a_sec['sec_id']:
+                    return True
 
         if sectors_by_district.size>0:
             # total number of households based on the value of each sector
             while(total<self._limit_to_stop):
-                buffer_value=buffer_value+self._buffer_step
-                total=0
-                selected_sectors=[]
+                buffer_value+=self._buffer_step
+                total=get_total_from_selected_sectors(ss=selected_sectors)
                 # apply a buffer to a seed, in meters
-                a_seed['geometry'] = a_seed.geometry.buffer(buffer_value)
+                a_seed['geometry'] = a_seed.geometry.buffer(buffer_value)                
                 candidate_sectors = gpd.sjoin(sectors_by_district, a_seed, how='inner', predicate='intersects')
                 for index, row in candidate_sectors.iterrows():
-                    selected_sectors.append(row)
-                    total=total+row['num_domicilios']
-                    if total >= (self._lower_limit):
+                    if not find_in_selected_sectors(ss=selected_sectors, r=row):
+                        selected_sectors.append(row)
+                        total+=row['num_domicilios']
+
+                    if  total <= self._upper_limit and total >= self._limit_to_stop:
                         the_end=True
                         break
                 if the_end:
@@ -140,7 +157,7 @@ class SeedProcess():
             a_seed['total_domicilios'] = total
 
             # remove the selected sectors from main collection of sectors
-            self._sectors=self._sectors.loc[~self._sectors['cd_setor'].isin(candidate_sectors['cd_setor_left'])]
+            self._sectors=self._sectors.loc[~self._sectors['cd_setor'].isin(candidate_sectors['cd_setor'])]
         
         return candidate_sectors, a_seed
 
@@ -149,7 +166,6 @@ class SeedProcess():
         for seed_id in self._seeds:
             sectors, buffer_seed=self.__get_sectors_by_seed(seed_id[0])
             if sectors is None: continue
-            sectors['seed_id'] = seed_id[0]
             self._output_sectors = pd.concat([self._output_sectors, sectors]) if self._output_sectors is not None else sectors
             self._output_seeds = pd.concat([self._output_seeds, buffer_seed]) if self._output_seeds is not None else buffer_seed
             
@@ -174,8 +190,8 @@ class SeedProcess():
 
 
 # local test
-import warnings
-warnings.filterwarnings("ignore")
+#import warnings
+#warnings.filterwarnings("ignore")
 db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
-sp = SeedProcess(db_url=db, district_code='355030826')
+sp = SeedProcess(db_url=db)#, district_code='355030826')
 sp.execute()
