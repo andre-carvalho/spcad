@@ -3,6 +3,7 @@ import pandas as pd
 from psycopg2 import connect
 from sqlalchemy import create_engine
 from datetime import datetime
+from alive_progress import alive_bar
 
 class SeedProcess():
     """
@@ -100,18 +101,18 @@ class SeedProcess():
             - The numeric value of "_limit_to_stop" must be defined.
 
         """
-        # Given a seed id, read one seed object as GeoDataFrame
+        # given a seed id, read one seed object as GeoDataFrame
         a_seed=self.__read_seed_by_id(seed_id)
         
         # abort if the current seed sector code is in the list of already selected sectors.
         a_seed=a_seed.loc[~a_seed['cd_setor'].isin(self._output_sectors['cd_setor'])] if self._output_sectors is not None else a_seed
-        if a_seed is None or a_seed.size==0:
+        if a_seed is None or len(a_seed)==0:
             return None, None
         
-        # And get the sectors where seed is inside
+        # take all remaining sectors in the district where the seed is located.
         sectors_by_district=self._sectors.loc[self._sectors['cd_dist'].isin(a_seed['cd_dist'])]
 
-        # clean seed columns
+        # clear Seed columns to avoid duplicate columns in intersection operation
         a_seed.pop('cd_dist')
         a_seed.pop('cd_setor')
 
@@ -126,13 +127,15 @@ class SeedProcess():
             for a_sec in ss:
                 total+=a_sec['num_domicilios']
             return total
+
         # used to find a candidate sector in selected sector list
         def find_in_selected_sectors(ss, r):
             for a_sec in ss:
                 if r['sec_id']==a_sec['sec_id']:
                     return True
+            return False
 
-        if sectors_by_district.size>0:
+        if len(sectors_by_district)>0:
             # total number of households based on the value of each sector
             while(total<self._limit_to_stop):
                 buffer_value+=self._buffer_step
@@ -148,6 +151,10 @@ class SeedProcess():
                     if  total <= self._upper_limit and total >= self._limit_to_stop:
                         the_end=True
                         break
+
+                # if arrive here and the total is not achieve the limits so the remaining sectors are insufficient to proceed.
+                the_end=len(sectors_by_district)==len(candidate_sectors) if not the_end else the_end
+
                 if the_end:
                     candidate_sectors=gpd.GeoDataFrame(selected_sectors)
                     break
@@ -163,12 +170,15 @@ class SeedProcess():
 
     def join_sectors(self):
 
-        for seed_id in self._seeds:
-            sectors, buffer_seed=self.__get_sectors_by_seed(seed_id[0])
-            if sectors is None: continue
-            self._output_sectors = pd.concat([self._output_sectors, sectors]) if self._output_sectors is not None else sectors
-            self._output_seeds = pd.concat([self._output_seeds, buffer_seed]) if self._output_seeds is not None else buffer_seed
-            
+        with alive_bar(len(self._seeds)) as bar:
+            for seed_id in self._seeds:
+                print(seed_id[0])
+                sectors, buffer_seed=self.__get_sectors_by_seed(seed_id[0])
+                if sectors is None: continue
+                self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, sectors], ignore_index=True), crs=self._output_sectors.crs) if self._output_sectors is not None else sectors
+                self._output_seeds = gpd.GeoDataFrame(pd.concat([self._output_seeds, buffer_seed], ignore_index=True), crs=self._output_seeds.crs) if self._output_seeds is not None else buffer_seed
+                bar()
+        
         self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
         self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
 
@@ -188,10 +198,10 @@ class SeedProcess():
             print(e.__str__())
             raise e
 
-
 # local test
 #import warnings
 #warnings.filterwarnings("ignore")
 db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
-sp = SeedProcess(db_url=db)#, district_code='355030826')
+#sp = SeedProcess(db_url=db, district_code='355030840')
+sp = SeedProcess(db_url=db)
 sp.execute()
