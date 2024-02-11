@@ -170,15 +170,20 @@ class SeedProcess():
 
     def join_sectors(self):
 
+        # get CRS from input sectors to use by default in output data
+        CRS=self._sectors.crs
+
         with alive_bar(len(self._seeds)) as bar:
             for seed_id in self._seeds:
                 print(seed_id[0])
                 sectors, buffer_seed=self.__get_sectors_by_seed(seed_id[0])
                 if sectors is None: continue
-                self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, sectors], ignore_index=True), crs=self._output_sectors.crs) if self._output_sectors is not None else sectors
-                self._output_seeds = gpd.GeoDataFrame(pd.concat([self._output_seeds, buffer_seed], ignore_index=True), crs=self._output_seeds.crs) if self._output_seeds is not None else buffer_seed
+                self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, sectors], ignore_index=True)) if self._output_sectors is not None else sectors
+                self._output_seeds = gpd.GeoDataFrame(pd.concat([self._output_seeds, buffer_seed], ignore_index=True)) if self._output_seeds is not None else buffer_seed
                 bar()
         
+        self._output_sectors=self._output_sectors.set_crs(crs=CRS)
+        self._output_seeds=self._output_seeds.set_crs(crs=CRS)
         self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
         self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
 
