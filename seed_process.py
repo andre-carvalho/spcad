@@ -175,7 +175,6 @@ class SeedProcess():
 
         with alive_bar(len(self._seeds)) as bar:
             for seed_id in self._seeds:
-                print(seed_id[0])
                 sectors, buffer_seed=self.__get_sectors_by_seed(seed_id[0])
                 if sectors is None: continue
                 self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, sectors], ignore_index=True)) if self._output_sectors is not None else sectors
