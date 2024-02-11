@@ -13,19 +13,23 @@ class SeedProcess():
         - db_url, Postgres String connection;
         - seed_table, the schema and name of Seed table;
         - sector_table, the schema and name of Seed table;
+        - district_table, the schema and name of District table;
 
     There are optional input parameters:
         - buffer_step, the value to increase the seed influence area, in meters;
+        - percent_range, the value to apply over the limit_to_stop to accept agregation of sectors;
         - limit_to_stop, the reference value to finalize the sectoral aggregation of a seed influence area;
+        - district_code, the code of one district to test the output without build all data;
     """
 
-    def __init__(self, db_url, seed_table="public.sementes_pts", sector_table="public.setores_censitarios",
+    def __init__(self, db_url, seed_table, sector_table, district_table,
                  buffer_step=5, percent_range=10, limit_to_stop=5000, district_code=None):
 
         self._dburl = db_url
         self._engine = create_engine(db_url)
         self._seed_table = seed_table
         self._sector_table = sector_table
+        self._district_table = district_table
         self._district_code = district_code
 
         self._buffer_step=buffer_step
@@ -35,59 +39,69 @@ class SeedProcess():
         self._output_sectors=None
         self._output_seeds=None
 
-    def __read_seed_by_id(self, seed_id):
+    def __read_seeds_by_district(self, district_code):
         """
-        Get the one seed using deed identifier from database as GeoDataFrame.
+        Get the seeds using one district code from database as GeoDataFrame.
 
         Prerequisites:
          - The name from "_seed_table" table must exist in the database and have data.
         """
-        sql = f"SELECT id as seed_id, cd_dist, cd_setor, geom as geometry FROM {self._seed_table} WHERE id={seed_id}"
+        sql = f"SELECT id as seed_id, geom as geometry FROM {self._seed_table} WHERE cd_dist='{district_code}'"
         return gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
 
-    def __load_seed_identifiers(self):
+    def __exec_query(self, sql):
         """
-        Get all seed identifiers from database as list.
-
-        Prerequisites:
-         - The name from "_seed_table" table must exist in the database and have data.
+        Fetch data from database from given query and package inside a list structure
         """
+        some_list = {}
         try:
-            self._seeds = {}
-            where=""
-            if self._district_code is not None:
-                where=f"WHERE cd_dist='{self._district_code}'"
-            
-            sql = f"SELECT id FROM {self._seed_table} {where} ORDER BY ordem::integer ASC"
             self._conn = connect(self._dburl)
             cur = self._conn.cursor()
             cur.execute(sql)
             results=cur.fetchall()
-            self._seeds=list(results)
+            some_list=list(results)
             cur.close()
         except Exception as e:
-            print('Error on read seed indentifiers')
-            print(e.__str__())
             raise e
         finally:
             if not self._conn.closed:
                 self._conn.close()
+        
+        return some_list
 
-    def __load_sectors(self):
+    def __load_district_codes(self):
         """
-        Get all sectors from database as GeoDataFrame.
+        Get all district codes from database as list.
+
+        Prerequisites:
+         - The name from "_district_table" table must exist in the database and have data.
+        """
+        try:
+            self._districts = {}
+            where=""
+            if self._district_code is not None:
+                where=f"WHERE cd_dist='{self._district_code}'"
+            
+            sql = f"SELECT cd_dist FROM {self._district_table} {where}"
+
+            self._districts=self.__exec_query(sql)
+            
+        except Exception as e:
+            print('Error on read district indentifiers')
+            print(e.__str__())
+            raise e
+
+    def __get_sectors_by_district(self, district_code):
+        """
+        Get all sectors given one district code from database as GeoDataFrame.
 
         Prerequisites:
          - The name from "_sector_table" table must exist in the database and have data.
         """
-        self._sectors = {}
-        where=""
-        if self._district_code is not None:
-            where=f"WHERE cd_dist='{self._district_code}'"
-
         sql = f"""SELECT id as sec_id, cd_dist, cd_setor, cadastrad::integer as num_cadastrados,
-        domicilios::integer as num_domicilios, geom as geometry FROM {self._sector_table} {where}"""
-        self._sectors = gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
+        domicilios::integer as num_domicilios, geom as geometry FROM {self._sector_table} WHERE cd_dist='{district_code}'
+        """
+        return gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
 
     def __get_sectors_by_seed(self, seed_id):
         """
@@ -168,19 +182,53 @@ class SeedProcess():
         
         return candidate_sectors, a_seed
 
+    def district_sectors_grouping(self, seeds, sectors):
+        # controls with initial values
+        buffer_value=0
+        remaining_sectors=sectors
+        CRS=seeds.crs
+        for index, a_seed in seeds.iterrows():
+            a_seed=gpd.GeoDataFrame([a_seed])
+            a_seed=a_seed.set_crs(crs=CRS)
+            selected_sectors, remaining_sectors, buffer_seed=self.plus_buffer(buffer_value=buffer_value, seed=a_seed, sectors=remaining_sectors)
+            self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, selected_sectors], ignore_index=True)) if self._output_sectors is not None else selected_sectors
+            self._output_seeds = gpd.GeoDataFrame(pd.concat([self._output_seeds, buffer_seed], ignore_index=True)) if self._output_seeds is not None else buffer_seed
+            # if no more sectors to proceed, ignore the remaining seeds
+            if len(remaining_sectors)==0: break
+            
+
+    def plus_buffer(self, buffer_value, seed, sectors):
+        buffer_value+=self._buffer_step
+        # apply a buffer to a seed, in meters
+        seed['geometry'] = seed.geometry.buffer(buffer_value)
+        candidate_sectors = gpd.sjoin(sectors, seed, how='inner', predicate='intersects')
+        total=candidate_sectors.groupby('cd_dist')['num_domicilios'].sum().iloc[0]
+        if self._limit_to_stop <= total <= self._upper_limit or len(candidate_sectors)==len(sectors):
+            # remove the selected sectors from district sectors
+            sectors=sectors.loc[~sectors['cd_setor'].isin(candidate_sectors['cd_setor'])]
+            # store results on seed GeoDataFrame
+            seed['buffer_value'] = buffer_value
+            seed['total_domicilios'] = total
+            return candidate_sectors, sectors, seed
+        else:
+            self.plus_buffer(buffer_value=buffer_value, seed=seed, sectors=sectors)
+
     def join_sectors(self):
 
-        # get CRS from input sectors to use by default in output data
-        CRS=self._sectors.crs
+        # load all district codes
+        self.__load_district_codes()
 
-        with alive_bar(len(self._seeds)) as bar:
-            for seed_id in self._seeds:
-                sectors, buffer_seed=self.__get_sectors_by_seed(seed_id[0])
-                if sectors is None: continue
-                self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, sectors], ignore_index=True)) if self._output_sectors is not None else sectors
-                self._output_seeds = gpd.GeoDataFrame(pd.concat([self._output_seeds, buffer_seed], ignore_index=True)) if self._output_seeds is not None else buffer_seed
+        with alive_bar(len(self._districts)) as bar:
+            for district_code in self._districts:
+                # read the list of seeds given a district_code
+                district_seeds=self.__read_seeds_by_district(district_code=district_code[0])
+                district_sectors=self.__get_sectors_by_district(district_code=district_code[0])
+                # group sectors by seeds
+                self.district_sectors_grouping(seeds=district_seeds, sectors=district_sectors)
                 bar()
         
+        # get CRS from input sectors to use by default in output data
+        CRS=self._output_sectors.crs
         self._output_sectors=self._output_sectors.set_crs(crs=CRS)
         self._output_seeds=self._output_seeds.set_crs(crs=CRS)
         self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
@@ -189,9 +237,6 @@ class SeedProcess():
     def execute(self):
         try:
             print("Starting at: "+datetime.now().strftime("%d/%m/%YT%H:%M:%S"))
-
-            self.__load_sectors()
-            self.__load_seed_identifiers()
 
             self.join_sectors()
 
@@ -207,5 +252,5 @@ class SeedProcess():
 #warnings.filterwarnings("ignore")
 db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
 #sp = SeedProcess(db_url=db, district_code='355030840')
-sp = SeedProcess(db_url=db)
+sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos")
 sp.execute()
