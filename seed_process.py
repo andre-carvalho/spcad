@@ -117,9 +117,9 @@ class SeedProcess():
         CRS=seeds.crs
         for index, a_seed in seeds.iterrows():
 
-            # abort if the current seed is in the list of already proceeded seeds.
-            if self._output_seeds is not None and (self._output_seeds['geometry'].contains(a_seed['geometry'])).any():
-                break
+            # abort if the current seed is in the list of output selected sectors.
+            if self._output_sectors is not None and (self._output_sectors.intersects(a_seed['geometry'])).any():
+                continue
             #print("seed_id="+str(a_seed['seed_id']))
             a_seed=gpd.GeoDataFrame([a_seed])
             a_seed=a_seed.set_crs(crs=CRS)
@@ -128,6 +128,9 @@ class SeedProcess():
             self._output_seeds = gpd.GeoDataFrame(pd.concat([self._output_seeds, buffer_seed], ignore_index=True)) if self._output_seeds is not None else buffer_seed
             # if no more sectors to proceed, ignore the remaining seeds
             if len(remaining_sectors)==0: break
+        
+        self._output_sectors=self._output_sectors.set_crs(crs=CRS)
+        self._output_seeds=self._output_seeds.set_crs(crs=CRS)
             
     def __get_sectors_by_seed(self, seed, sectors, buffer_value=0, selected_sectors=None):
         """
@@ -142,8 +145,6 @@ class SeedProcess():
         buffer_value+=self._buffer_step
         total=0
         dissolved_geometry=None
-        any_candidate_touches=True
-        any_sectors_touches=False
         the_end=False # to control the end of processing of the current seed
 
         # make a clone of seed to apply buffer based on buffer_value without buffer over buffer
@@ -160,16 +161,16 @@ class SeedProcess():
             total=dissolved_selected_sectors.iloc[0].num_domicilios
             # get dissolved geometry
             dissolved_geometry=dissolved_selected_sectors.iloc[0].geometry
-            # test if all candidate sectors touches the previous selected sectors
-            any_candidate_touches=(candidate_sectors.touches(dissolved_selected_sectors.iloc[0].geometry)).any()
-            any_sectors_touches=(sectors.touches(dissolved_selected_sectors.iloc[0].geometry)).any()
+            # apply small buffer to dissolved geometry to use intersection approach to test contiguous sectors
+            dissolved_geometry=dissolved_geometry.buffer(0.1)
 
         if len(candidate_sectors)>0:
-            if any_candidate_touches:
+            # Do we not have previously selected sectors or are there adjacent candidates?
+            if dissolved_geometry is None or (candidate_sectors.intersects(dissolved_geometry)).any():
                 new_candidate_sectors=[]
                 for index, row in candidate_sectors.iterrows():
-                    # test if current candidate sector touches the previous selected sectors
-                    if dissolved_geometry is None or (row['geometry']).touches(dissolved_geometry):
+                    # if is the first time or current candidate sector touches the previous selected sectors
+                    if total==0 or (row['geometry']).intersects(dissolved_geometry):
                         if (total+row['num_domicilios']) < self._upper_limit:
                             total+=row['num_domicilios']
                             new_candidate_sectors.append(row)
@@ -195,7 +196,8 @@ class SeedProcess():
                 #the_end = len(sectors)==len(candidate_sectors)
                 the_end = True
         else:
-            the_end = not any_sectors_touches
+            # we have remaining sectors and previously selected sectors, but they do not touch each other
+            the_end = len(sectors)>0 and dissolved_geometry is not None and not (sectors.intersects(dissolved_geometry)).any()
 
         # print(f"len(candidate_sectors)={len(candidate_sectors)}")
         # print(f"seed_id={seed.iloc[0]['seed_id']}, local_seed_id={local_seed.iloc[0]['seed_id']}, buffer_value={buffer_value}, total={total}")
@@ -222,10 +224,7 @@ class SeedProcess():
                 self.district_sectors_grouping(seeds=district_seeds, sectors=district_sectors)
                 bar()
         
-        # get CRS from input sectors to use by default in output data
-        CRS=self._output_sectors.crs
-        self._output_sectors=self._output_sectors.set_crs(crs=CRS)
-        self._output_seeds=self._output_seeds.set_crs(crs=CRS)
+        # store on database
         self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
         self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
 
