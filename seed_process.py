@@ -103,115 +103,110 @@ class SeedProcess():
         """
         return gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
 
-    def __get_sectors_by_seed(self, seed_id):
-        """
-        Given a seed identifier, create a buffer area and look for
-        all sectors that intersect with this buffer and test the rules.
-        If the rules match, store the selected sectors, otherwise
-        increase the buffer to the default value and try again.
-
-        Prerequisites:
-            - The numeric value of "_buffer_step" must be defined.
-            - The numeric value of "_limit_to_stop" must be defined.
-
-        """
-        # given a seed id, read one seed object as GeoDataFrame
-        a_seed=self.__read_seed_by_id(seed_id)
-        
-        # abort if the current seed sector code is in the list of already selected sectors.
-        a_seed=a_seed.loc[~a_seed['cd_setor'].isin(self._output_sectors['cd_setor'])] if self._output_sectors is not None else a_seed
-        if a_seed is None or len(a_seed)==0:
-            return None, None
-        
-        # take all remaining sectors in the district where the seed is located.
-        sectors_by_district=self._sectors.loc[self._sectors['cd_dist'].isin(a_seed['cd_dist'])]
-
-        # clear Seed columns to avoid duplicate columns in intersection operation
-        a_seed.pop('cd_dist')
-        a_seed.pop('cd_setor')
-
-        # controls with initial values
-        buffer_value=total=0
-        candidate_sectors=None
-        the_end=False
-        selected_sectors=[]
-        # used to sum the total from a previous selected sector list
-        def get_total_from_selected_sectors(ss):
-            total=0
-            for a_sec in ss:
-                total+=a_sec['num_domicilios']
-            return total
-
-        # used to find a candidate sector in selected sector list
-        def find_in_selected_sectors(ss, r):
-            for a_sec in ss:
-                if r['sec_id']==a_sec['sec_id']:
-                    return True
-            return False
-
-        if len(sectors_by_district)>0:
-            # total number of households based on the value of each sector
-            while(total<self._limit_to_stop):
-                buffer_value+=self._buffer_step
-                total=get_total_from_selected_sectors(ss=selected_sectors)
-                # apply a buffer to a seed, in meters
-                a_seed['geometry'] = a_seed.geometry.buffer(buffer_value)                
-                candidate_sectors = gpd.sjoin(sectors_by_district, a_seed, how='inner', predicate='intersects')
-                for index, row in candidate_sectors.iterrows():
-                    if not find_in_selected_sectors(ss=selected_sectors, r=row):
-                        selected_sectors.append(row)
-                        total+=row['num_domicilios']
-
-                    if  total <= self._upper_limit and total >= self._limit_to_stop:
-                        the_end=True
-                        break
-
-                # if arrive here and the total is not achieve the limits so the remaining sectors are insufficient to proceed.
-                the_end=len(sectors_by_district)==len(candidate_sectors) if not the_end else the_end
-
-                if the_end:
-                    candidate_sectors=gpd.GeoDataFrame(selected_sectors)
-                    break
-            
-            # store results on seed GeoDataFrame
-            a_seed['buffer_value'] = buffer_value
-            a_seed['total_domicilios'] = total
-
-            # remove the selected sectors from main collection of sectors
-            self._sectors=self._sectors.loc[~self._sectors['cd_setor'].isin(candidate_sectors['cd_setor'])]
-        
-        return candidate_sectors, a_seed
 
     def district_sectors_grouping(self, seeds, sectors):
+        """
+        Distribute the district sectors to each district seeds.
+
+        Parameters:
+            - seeds, all district seeds
+            - sectors, all district sectors
+        """
         # controls with initial values
-        buffer_value=0
         remaining_sectors=sectors
         CRS=seeds.crs
         for index, a_seed in seeds.iterrows():
+
+            # abort if the current seed is in the list of already proceeded seeds.
+            if self._output_seeds is not None and (self._output_seeds['geometry'].contains(a_seed['geometry'])).any():
+                break
+            #print("seed_id="+str(a_seed['seed_id']))
             a_seed=gpd.GeoDataFrame([a_seed])
             a_seed=a_seed.set_crs(crs=CRS)
-            selected_sectors, remaining_sectors, buffer_seed=self.plus_buffer(buffer_value=buffer_value, seed=a_seed, sectors=remaining_sectors)
+            selected_sectors, remaining_sectors, buffer_seed=self.__get_sectors_by_seed(seed=a_seed, sectors=remaining_sectors)
             self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, selected_sectors], ignore_index=True)) if self._output_sectors is not None else selected_sectors
             self._output_seeds = gpd.GeoDataFrame(pd.concat([self._output_seeds, buffer_seed], ignore_index=True)) if self._output_seeds is not None else buffer_seed
             # if no more sectors to proceed, ignore the remaining seeds
             if len(remaining_sectors)==0: break
             
+    def __get_sectors_by_seed(self, seed, sectors, buffer_value=0, selected_sectors=None):
+        """
+        Get sectors by seed using successive increase buffer over seed.
 
-    def plus_buffer(self, buffer_value, seed, sectors):
+        Parameters:
+            - seed, a district seed that has not yet been used
+            - sectors, all remaining district sectors
+            - buffer_value, the buffer value used to control buffer growth on successive calls
+            - selected_sectors, the selected sectors by intersection of buffer over a seed
+        """
         buffer_value+=self._buffer_step
+        total=0
+        dissolved_geometry=None
+        any_candidate_touches=True
+        any_sectors_touches=False
+        the_end=False # to control the end of processing of the current seed
+
+        # make a clone of seed to apply buffer based on buffer_value without buffer over buffer
+        local_seed = gpd.GeoDataFrame([seed.iloc[0]])
+        local_seed = local_seed.set_crs(crs=seed.crs)
         # apply a buffer to a seed, in meters
-        seed['geometry'] = seed.geometry.buffer(buffer_value)
-        candidate_sectors = gpd.sjoin(sectors, seed, how='inner', predicate='intersects')
-        total=candidate_sectors.groupby('cd_dist')['num_domicilios'].sum().iloc[0]
-        if self._limit_to_stop <= total <= self._upper_limit or len(candidate_sectors)==len(sectors):
-            # remove the selected sectors from district sectors
-            sectors=sectors.loc[~sectors['cd_setor'].isin(candidate_sectors['cd_setor'])]
+        local_seed['geometry'] = local_seed.geometry.buffer(buffer_value)
+        candidate_sectors = gpd.sjoin(sectors, local_seed, how='inner', predicate='intersects')
+
+        if selected_sectors is not None:
+            # dissolves the previous selected sectors
+            dissolved_selected_sectors=selected_sectors.dissolve(by='seed_id', aggfunc={'num_domicilios': 'sum'})
+            # gets the total selected by the previous buffer
+            total=dissolved_selected_sectors.iloc[0].num_domicilios
+            # get dissolved geometry
+            dissolved_geometry=dissolved_selected_sectors.iloc[0].geometry
+            # test if all candidate sectors touches the previous selected sectors
+            any_candidate_touches=(candidate_sectors.touches(dissolved_selected_sectors.iloc[0].geometry)).any()
+            any_sectors_touches=(sectors.touches(dissolved_selected_sectors.iloc[0].geometry)).any()
+
+        if len(candidate_sectors)>0:
+            if any_candidate_touches:
+                new_candidate_sectors=[]
+                for index, row in candidate_sectors.iterrows():
+                    # test if current candidate sector touches the previous selected sectors
+                    if dissolved_geometry is None or (row['geometry']).touches(dissolved_geometry):
+                        if (total+row['num_domicilios']) < self._upper_limit:
+                            total+=row['num_domicilios']
+                            new_candidate_sectors.append(row)
+                        else:
+                            the_end=True
+                            break
+                
+                # if has any sectors to aggregate
+                if len(new_candidate_sectors)>0:
+                    # copy the new candidate sectors to selected sectors
+                    aux_selected_sectors = gpd.GeoDataFrame(new_candidate_sectors, crs=sectors.crs)
+
+                    if selected_sectors is None:
+                        selected_sectors = aux_selected_sectors
+                    else:
+                        selected_sectors = gpd.GeoDataFrame(pd.concat([selected_sectors, aux_selected_sectors], ignore_index=True), crs=sectors.crs)
+
+                    # remove the auxiliary selected sectors from remaining district sectors
+                    sectors=sectors.loc[~sectors['cd_setor'].isin(aux_selected_sectors['cd_setor'])]
+                    # if remaining district sectors is empty, it is the end
+                    the_end = len(sectors)==0
+            else:
+                #the_end = len(sectors)==len(candidate_sectors)
+                the_end = True
+        else:
+            the_end = not any_sectors_touches
+
+        # print(f"len(candidate_sectors)={len(candidate_sectors)}")
+        # print(f"seed_id={seed.iloc[0]['seed_id']}, local_seed_id={local_seed.iloc[0]['seed_id']}, buffer_value={buffer_value}, total={total}")
+        if the_end:
             # store results on seed GeoDataFrame
+            seed['geometry'] = seed.geometry.buffer(buffer_value)
             seed['buffer_value'] = buffer_value
             seed['total_domicilios'] = total
-            return candidate_sectors, sectors, seed
+            return selected_sectors, sectors, seed
         else:
-            self.plus_buffer(buffer_value=buffer_value, seed=seed, sectors=sectors)
+            return self.__get_sectors_by_seed(seed=seed, sectors=sectors, buffer_value=buffer_value, selected_sectors=selected_sectors)
 
     def join_sectors(self):
 
