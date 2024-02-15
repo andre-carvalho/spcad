@@ -32,6 +32,7 @@ class SeedProcess():
         self._district_table = district_table
         self._district_code = district_code
 
+        self._buffer_to_dissolve=0.5
         self._buffer_step=buffer_step
         self._limit_to_stop=limit_to_stop
         self._lower_limit=limit_to_stop-limit_to_stop*percent_range/100
@@ -46,7 +47,7 @@ class SeedProcess():
         Prerequisites:
          - The name from "_seed_table" table must exist in the database and have data.
         """
-        sql = f"SELECT id as seed_id, geom as geometry FROM {self._seed_table} WHERE cd_dist='{district_code}'"
+        sql = f"SELECT id as seed_id, geom as geometry FROM {self._seed_table} WHERE cd_dist='{district_code}' ORDER BY ordem::integer ASC"
         return gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
 
     def __exec_query(self, sql):
@@ -142,17 +143,22 @@ class SeedProcess():
             - buffer_value, the buffer value used to control buffer growth on successive calls
             - selected_sectors, the selected sectors by intersection of buffer over a seed
         """
-        buffer_value+=self._buffer_step
         total=0
-        dissolved_geometry=None
+        dissolved_geometry=candidate_sectors=None
         the_end=False # to control the end of processing of the current seed
 
-        # make a clone of seed to apply buffer based on buffer_value without buffer over buffer
-        local_seed = gpd.GeoDataFrame([seed.iloc[0]])
-        local_seed = local_seed.set_crs(crs=seed.crs)
-        # apply a buffer to a seed, in meters
-        local_seed['geometry'] = local_seed.geometry.buffer(buffer_value)
-        candidate_sectors = gpd.sjoin(sectors, local_seed, how='inner', predicate='intersects')
+        def get_candidates(seed, sectors, buffer_value, buffer_step):
+            buffer_value+=buffer_step
+            # make a clone of seed to apply buffer based on buffer_value without buffer over buffer
+            local_seed = gpd.GeoDataFrame([seed.iloc[0]])
+            local_seed = local_seed.set_crs(crs=seed.crs)
+            # apply a buffer to a seed, in meters
+            local_seed['geometry'] = local_seed.geometry.buffer(buffer_value)
+            candidate_sectors = gpd.sjoin(sectors, local_seed, how='inner', predicate='intersects')
+            if len(candidate_sectors)>0:
+                return candidate_sectors, buffer_value
+            else:
+                return get_candidates(seed, sectors, buffer_value, buffer_step)
 
         if selected_sectors is not None:
             # dissolves the previous selected sectors
@@ -162,46 +168,42 @@ class SeedProcess():
             # get dissolved geometry
             dissolved_geometry=dissolved_selected_sectors.iloc[0].geometry
             # apply small buffer to dissolved geometry to use intersection approach to test contiguous sectors
-            dissolved_geometry=dissolved_geometry.buffer(0.1)
-
-        if len(candidate_sectors)>0:
-            # Do we not have previously selected sectors or are there adjacent candidates?
-            if dissolved_geometry is None or (candidate_sectors.intersects(dissolved_geometry)).any():
-                new_candidate_sectors=[]
-                for index, row in candidate_sectors.iterrows():
-                    # if is the first time or current candidate sector touches the previous selected sectors
-                    if total==0 or (row['geometry']).intersects(dissolved_geometry):
-                        if (total+row['num_domicilios']) < self._upper_limit:
-                            total+=row['num_domicilios']
-                            new_candidate_sectors.append(row)
-                        else:
-                            the_end=True
-                            break
-                
-                # if has any sectors to aggregate
-                if len(new_candidate_sectors)>0:
-                    # copy the new candidate sectors to selected sectors
-                    aux_selected_sectors = gpd.GeoDataFrame(new_candidate_sectors, crs=sectors.crs)
-
-                    if selected_sectors is None:
-                        selected_sectors = aux_selected_sectors
-                    else:
-                        selected_sectors = gpd.GeoDataFrame(pd.concat([selected_sectors, aux_selected_sectors], ignore_index=True), crs=sectors.crs)
-
-                    # remove the auxiliary selected sectors from remaining district sectors
-                    sectors=sectors.loc[~sectors['cd_setor'].isin(aux_selected_sectors['cd_setor'])]
-                    # if remaining district sectors is empty, it is the end
-                    the_end = len(sectors)==0
+            dissolved_geometry=dissolved_geometry.buffer(self._buffer_to_dissolve)
+            # any remaining sectors touches the previously selected sectors
+            if (sectors.intersects(dissolved_geometry)).any():
+                candidate_sectors, buffer_value=get_candidates(seed, sectors, buffer_value, self._buffer_step)
             else:
-                #the_end = len(sectors)==len(candidate_sectors)
                 the_end = True
         else:
-            # we have remaining sectors and previously selected sectors, but they do not touch each other
-            the_end = len(sectors)>0 and dissolved_geometry is not None and not (sectors.intersects(dissolved_geometry)).any()
+            candidate_sectors, buffer_value=get_candidates(seed, sectors, buffer_value, self._buffer_step)
 
-        # print(f"len(candidate_sectors)={len(candidate_sectors)}")
-        # print(f"seed_id={seed.iloc[0]['seed_id']}, local_seed_id={local_seed.iloc[0]['seed_id']}, buffer_value={buffer_value}, total={total}")
-        if the_end:
+        if not the_end:
+            confirmed_candidate_sectors=[]
+            for index, row in candidate_sectors.iterrows():
+                # if is the first time or current candidate sector touches the previous selected sectors
+                if total==0 or (row['geometry']).intersects(dissolved_geometry):
+                    if (total+row['num_domicilios']) < self._upper_limit:
+                        total+=row['num_domicilios']
+                        confirmed_candidate_sectors.append(row)
+                    else:
+                        the_end=True
+                        break
+            
+            # if has any sectors to aggregate
+            if len(confirmed_candidate_sectors)>0:
+                # copy the confirmed candidate sectors to selected sectors
+                aux_selected_sectors = gpd.GeoDataFrame(confirmed_candidate_sectors, crs=sectors.crs)
+
+                if selected_sectors is None:
+                    selected_sectors = aux_selected_sectors
+                else:
+                    selected_sectors = gpd.GeoDataFrame(pd.concat([selected_sectors, aux_selected_sectors], ignore_index=True), crs=sectors.crs)
+
+                # remove the auxiliary selected sectors from remaining district sectors
+                sectors=sectors.loc[~sectors['cd_setor'].isin(aux_selected_sectors['cd_setor'])]
+
+        # it is the end if there are no more district sectors OR if the upper limit is reached
+        if len(sectors)==0 or the_end:
             # store results on seed GeoDataFrame
             seed['geometry'] = seed.geometry.buffer(buffer_value)
             seed['buffer_value'] = buffer_value
@@ -242,9 +244,7 @@ class SeedProcess():
             raise e
 
 # local test
-#import warnings
-#warnings.filterwarnings("ignore")
 db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
-#sp = SeedProcess(db_url=db, district_code='355030840')
+#sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", district_code='355030811')
 sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos")
 sp.execute()
