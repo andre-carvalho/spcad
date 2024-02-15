@@ -35,8 +35,10 @@ class SeedProcess():
         self._buffer_to_dissolve=0.5
         self._buffer_step=buffer_step
         self._limit_to_stop=limit_to_stop
-        self._lower_limit=limit_to_stop-limit_to_stop*percent_range/100
+        self._lower_limit=limit_to_stop*percent_range/100
         self._upper_limit=limit_to_stop+limit_to_stop*percent_range/100
+        self._output_orphans=None
+        self._output_acdps=None
         self._output_sectors=None
         self._output_seeds=None
 
@@ -124,12 +126,17 @@ class SeedProcess():
             #print("seed_id="+str(a_seed['seed_id']))
             a_seed=gpd.GeoDataFrame([a_seed])
             a_seed=a_seed.set_crs(crs=CRS)
-            selected_sectors, remaining_sectors, buffer_seed=self.__get_sectors_by_seed(seed=a_seed, sectors=remaining_sectors)
+            acdps, selected_sectors, remaining_sectors, buffer_seed=self.__get_sectors_by_seed(seed=a_seed, sectors=remaining_sectors)
+
+            self._output_acdps = gpd.GeoDataFrame(pd.concat([self._output_acdps, acdps], ignore_index=True)) if self._output_acdps is not None else acdps
             self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, selected_sectors], ignore_index=True)) if self._output_sectors is not None else selected_sectors
             self._output_seeds = gpd.GeoDataFrame(pd.concat([self._output_seeds, buffer_seed], ignore_index=True)) if self._output_seeds is not None else buffer_seed
             # if no more sectors to proceed, ignore the remaining seeds
             if len(remaining_sectors)==0: break
         
+        if len(remaining_sectors)>0:
+            self._output_orphans = gpd.GeoDataFrame(pd.concat([self._output_orphans, remaining_sectors], ignore_index=True)) if self._output_orphans is not None else remaining_sectors        
+            self._output_orphans=self._output_orphans.set_crs(crs=CRS)
         self._output_sectors=self._output_sectors.set_crs(crs=CRS)
         self._output_seeds=self._output_seeds.set_crs(crs=CRS)
             
@@ -162,7 +169,7 @@ class SeedProcess():
 
         if selected_sectors is not None:
             # dissolves the previous selected sectors
-            dissolved_selected_sectors=selected_sectors.dissolve(by='seed_id', aggfunc={'num_domicilios': 'sum'})
+            dissolved_selected_sectors=selected_sectors.dissolve(by='seed_id', sort=False, aggfunc={'num_domicilios': 'sum'})
             # gets the total selected by the previous buffer
             total=dissolved_selected_sectors.iloc[0].num_domicilios
             # get dissolved geometry
@@ -204,11 +211,23 @@ class SeedProcess():
 
         # it is the end if there are no more district sectors OR if the upper limit is reached
         if len(sectors)==0 or the_end:
+
             # store results on seed GeoDataFrame
             seed['geometry'] = seed.geometry.buffer(buffer_value)
             seed['buffer_value'] = buffer_value
             seed['total_domicilios'] = total
-            return selected_sectors, sectors, seed
+
+            # dissolves the selected sectors
+            acdps=selected_sectors.dissolve(by='seed_id', sort=False,
+                                            aggfunc={
+                                                'num_domicilios': 'sum',
+                                                'seed_id': 'first'
+                                                })
+            acdps=gpd.GeoDataFrame(acdps, crs=selected_sectors.crs)
+            acdps['num_sectors']=len(selected_sectors)
+            acdps['area']=round(acdps.area.iloc[0],2)
+
+            return acdps, selected_sectors, sectors, seed
         else:
             return self.__get_sectors_by_seed(seed=seed, sectors=sectors, buffer_value=buffer_value, selected_sectors=selected_sectors)
 
@@ -227,6 +246,8 @@ class SeedProcess():
                 bar()
         
         # store on database
+        self._output_orphans.to_postgis(name="output_orphans", schema="public", con=self._engine, if_exists='replace')
+        self._output_acdps.to_postgis(name="output_acdps", schema="public", con=self._engine, if_exists='replace')
         self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
         self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
 
