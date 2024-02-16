@@ -101,8 +101,8 @@ class SeedProcess():
         Prerequisites:
          - The name from "_sector_table" table must exist in the database and have data.
         """
-        sql = f"""SELECT id as sec_id, cd_dist, cd_setor, cadastrad::integer as num_cadastrados,
-        domicilios::integer as num_domicilios, geom as geometry FROM {self._sector_table} WHERE cd_dist='{district_code}'
+        sql = f"""SELECT id as sec_id, cd_dist, cd_setor, cadastrad::integer as num_cad,
+        domicilios::integer as num_dom, geom as geometry FROM {self._sector_table} WHERE cd_dist='{district_code}'
         """
         return gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
 
@@ -169,9 +169,9 @@ class SeedProcess():
 
         if selected_sectors is not None:
             # dissolves the previous selected sectors
-            dissolved_selected_sectors=selected_sectors.dissolve(by='seed_id', sort=False, aggfunc={'num_domicilios': 'sum'})
+            dissolved_selected_sectors=selected_sectors.dissolve(by='seed_id', sort=False, aggfunc={'num_dom': 'sum'})
             # gets the total selected by the previous buffer
-            total=dissolved_selected_sectors.iloc[0].num_domicilios
+            total=dissolved_selected_sectors.iloc[0].num_dom
             # get dissolved geometry
             dissolved_geometry=dissolved_selected_sectors.iloc[0].geometry
             # apply small buffer to dissolved geometry to use intersection approach to test contiguous sectors
@@ -189,8 +189,8 @@ class SeedProcess():
             for index, row in candidate_sectors.iterrows():
                 # if is the first time or current candidate sector touches the previous selected sectors
                 if total==0 or (row['geometry']).intersects(dissolved_geometry):
-                    if (total+row['num_domicilios']) < self._upper_limit:
-                        total+=row['num_domicilios']
+                    if (total+row['num_dom']) < self._upper_limit:
+                        total+=row['num_dom']
                         confirmed_candidate_sectors.append(row)
                     else:
                         the_end=True
@@ -214,18 +214,20 @@ class SeedProcess():
 
             # store results on seed GeoDataFrame
             seed['geometry'] = seed.geometry.buffer(buffer_value)
-            seed['buffer_value'] = buffer_value
-            seed['total_domicilios'] = total
+            seed['buffer_val'] = buffer_value
+            seed['total_dom'] = total
 
             # dissolves the selected sectors
             acdps=selected_sectors.dissolve(by='seed_id', sort=False,
                                             aggfunc={
-                                                'num_domicilios': 'sum',
+                                                'num_dom': 'sum',
                                                 'seed_id': 'first'
                                                 })
             acdps=gpd.GeoDataFrame(acdps, crs=selected_sectors.crs)
-            acdps['num_sectors']=len(selected_sectors)
+            acdps['n_sectors']=len(selected_sectors)
             acdps['area']=round(acdps.area.iloc[0],2)
+            acdps['total_dom'] = total
+            acdps['cd_sectors']=','.join(selected_sectors['cd_setor'])
 
             return acdps, selected_sectors, sectors, seed
         else:
