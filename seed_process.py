@@ -23,7 +23,7 @@ class SeedProcess():
     """
 
     def __init__(self, db_url, seed_table, sector_table, district_table,
-                 buffer_step=5, percent_range=10, limit_to_stop=5000, district_code=None):
+                 buffer_step=5, percent_range=10, limit_to_stop=5000, lower_limit=None, district_code=None):
 
         self._dburl = db_url
         self._engine = create_engine(db_url)
@@ -35,7 +35,7 @@ class SeedProcess():
         self._buffer_to_dissolve=0.5
         self._buffer_step=buffer_step
         self._limit_to_stop=limit_to_stop
-        self._lower_limit=limit_to_stop*percent_range/100
+        self._lower_limit=limit_to_stop*percent_range/100 if lower_limit is None else lower_limit
         self._upper_limit=limit_to_stop+limit_to_stop*percent_range/100
         self._output_orphans=None
         self._output_acdps=None
@@ -266,6 +266,6 @@ class SeedProcess():
 
 # local test
 db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
-#sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", district_code='355030811')
-sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos")
+#sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", lower_limit=1000, district_code='355030811')
+sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", lower_limit=1000)
 sp.execute()
