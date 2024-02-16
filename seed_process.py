@@ -215,7 +215,7 @@ class SeedProcess():
             # store results on seed GeoDataFrame
             seed['geometry'] = seed.geometry.buffer(buffer_value)
             seed['buffer_val'] = buffer_value
-            seed['total_dom'] = total
+            seed['num_dom'] = total
 
             # dissolves the selected sectors
             acdps=selected_sectors.dissolve(by='seed_id', sort=False,
@@ -226,7 +226,6 @@ class SeedProcess():
             acdps=gpd.GeoDataFrame(acdps, crs=selected_sectors.crs)
             acdps['n_sectors']=len(selected_sectors)
             acdps['area_m2']=round(acdps.area.iloc[0],2)
-            acdps['total_dom'] = total
             acdps['cd_sectors']=','.join(selected_sectors['cd_setor'])
             # next id to new acdp
             acdp_id=self._output_acdps['acdp_id'].max()+1 if self._output_acdps is not None else 0
@@ -252,11 +251,20 @@ class SeedProcess():
                 self.district_sectors_grouping(seeds=district_seeds, sectors=district_sectors)
                 bar()
         
+        # remove unused columns
+        self._output_sectors.pop('index_right')
+        
+        path_file="/home/andre/Projects/SPCAD_Miguel/entrega1"
         # store on database
         self._output_orphans.to_postgis(name="output_orphans", schema="public", con=self._engine, if_exists='replace')
         self._output_acdps.to_postgis(name="output_acdps", schema="public", con=self._engine, if_exists='replace')
         self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
         self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
+
+        self._output_orphans.to_file(filename=f"{path_file}/output_orphans.shp")
+        self._output_acdps.to_file(filename=f"{path_file}/output_acdps.shp")
+        self._output_sectors.to_file(filename=f"{path_file}/output_sectors_by_seed.shp")
+        self._output_seeds.to_file(filename=f"{path_file}/output_buffer_seeds.shp")
 
     def execute(self):
         try:
