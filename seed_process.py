@@ -225,9 +225,14 @@ class SeedProcess():
                                                 })
             acdps=gpd.GeoDataFrame(acdps, crs=selected_sectors.crs)
             acdps['n_sectors']=len(selected_sectors)
-            acdps['area']=round(acdps.area.iloc[0],2)
+            acdps['area_m2']=round(acdps.area.iloc[0],2)
             acdps['total_dom'] = total
             acdps['cd_sectors']=','.join(selected_sectors['cd_setor'])
+            # next id to new acdp
+            acdp_id=self._output_acdps['acdp_id'].max()+1 if self._output_acdps is not None else 0
+            acdps['acdp_id']=acdp_id
+            # apply acdp id to selected sectors that compose this acdp
+            selected_sectors['acdp_id']=acdp_id
 
             return acdps, selected_sectors, sectors, seed
         else:
