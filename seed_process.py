@@ -137,7 +137,8 @@ class SeedProcess():
         
         if len(remaining_sectors)>0:
             selected_sectors, remaining_sectors, changed_acdps=self.__put_sectors_in_holes(sectors=remaining_sectors, acdps=district_acdps)
-            orphan_sectors = gpd.GeoDataFrame(pd.concat([orphan_sectors, remaining_sectors], ignore_index=True)) if orphan_sectors is not None else remaining_sectors        
+            if len(remaining_sectors)>0:
+                orphan_sectors = gpd.GeoDataFrame(pd.concat([orphan_sectors, remaining_sectors], ignore_index=True)) if orphan_sectors is not None else remaining_sectors        
             sectors_by_seeds = gpd.GeoDataFrame(pd.concat([sectors_by_seeds, selected_sectors], ignore_index=True)) if sectors_by_seeds is not None else selected_sectors
             # rebuild the acdps after cover holes
             if len(changed_acdps)>0:
@@ -170,11 +171,11 @@ class SeedProcess():
         selected_sectors=None
         # test if we have a hole on acdp
         holes=acdps.interiors
-        if len(holes)>0:
+        if len(holes)>0 and len(holes)==len(acdps):
             for idx, hole in holes.items():
                 if len(hole)>0:
-                    seed_id=acdps.iloc[idx]['seed_id']
-                    changed_acdps.append(acdps.iloc[idx]['acdp_id'])
+                    seed_id=idx
+                    changed_acdps.append(((acdps.loc[acdps['seed_id'] == idx])['acdp_id']).iloc[0])
                     for g in hole:
                         hole_pol=g.convex_hull
                         df = {'seed_id': [seed_id], 'geometry': [hole_pol]}
@@ -352,6 +353,6 @@ class SeedProcess():
 
 # local test
 db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
-#sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", lower_limit=1000, district_code='355030857')
+#sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", lower_limit=1000, district_code='355030879')
 sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", lower_limit=1000)
 sp.execute()
