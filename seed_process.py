@@ -169,15 +169,17 @@ class SeedProcess():
         """
         candidate_sectors=changed_acdps=[]
         selected_sectors=None
-        # test if we have a hole on acdp
-        holes=acdps.interiors
-        if len(holes)>0 and len(holes)==len(acdps):
-            for idx, hole in holes.items():
-                if len(hole)>0:
-                    seed_id=idx
-                    changed_acdps.append(((acdps.loc[acdps['seed_id'] == idx])['acdp_id']).iloc[0])
-                    for g in hole:
-                        hole_pol=g.convex_hull
+        for i, acdp in acdps.iterrows():
+            if acdp['geometry'].geom_type=='MultiPolygon':
+                acdp=acdp.explode()
+            if acdp['geometry'].geom_type=='Polygon':
+                holes=acdp['geometry'].interiors
+            if len(holes)>0:
+                for hole in holes:
+                    if not hole.is_empty:
+                        seed_id=acdp['seed_id']
+                        changed_acdps.append( acdp['acdp_id'] )
+                        hole_pol=hole.convex_hull
                         df = {'seed_id': [seed_id], 'geometry': [hole_pol]}
                         hole_gdf = gpd.GeoDataFrame(df, crs=sectors.crs)
                         candidate_sectors = gpd.sjoin(sectors, hole_gdf, how='inner', predicate='intersects')
