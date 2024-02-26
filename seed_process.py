@@ -156,7 +156,8 @@ class SeedProcess():
         # set all outputs to the CRS from input
         sectors_by_seeds=sectors_by_seeds.set_crs(crs=CRS)
         circle_seeds=circle_seeds.set_crs(crs=CRS)
-        orphan_sectors=orphan_sectors.set_crs(crs=CRS)
+        if orphan_sectors is not None:
+            orphan_sectors=orphan_sectors.set_crs(crs=CRS)
         district_acdps=district_acdps.set_crs(crs=CRS)
 
         return sectors_by_seeds, circle_seeds, orphan_sectors, district_acdps
