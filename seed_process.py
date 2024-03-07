@@ -3,6 +3,7 @@ import pandas as pd
 from psycopg2 import connect
 from sqlalchemy import create_engine
 from datetime import datetime
+from shapely.geometry import Polygon
 from alive_progress import alive_bar
 
 class SeedProcess():
@@ -136,23 +137,26 @@ class SeedProcess():
             if len(remaining_sectors)==0: break
         
         if len(remaining_sectors)>0:
-            selected_sectors, remaining_sectors, changed_acdps=self.__put_sectors_in_holes(sectors=remaining_sectors, acdps=district_acdps)
+            selected_sectors_aux, remaining_sectors, changed_acdps=self.__put_sectors_in_holes(sectors=remaining_sectors, acdps=district_acdps)
             if len(remaining_sectors)>0:
                 orphan_sectors = gpd.GeoDataFrame(pd.concat([orphan_sectors, remaining_sectors], ignore_index=True)) if orphan_sectors is not None else remaining_sectors        
-            sectors_by_seeds = gpd.GeoDataFrame(pd.concat([sectors_by_seeds, selected_sectors], ignore_index=True)) if sectors_by_seeds is not None else selected_sectors
+            sectors_by_seeds = gpd.GeoDataFrame(pd.concat([sectors_by_seeds, selected_sectors_aux], ignore_index=True)) if sectors_by_seeds is not None else selected_sectors
             # rebuild the acdps after cover holes
             if len(changed_acdps)>0:
                 for acdp_id in changed_acdps:
-                    # remove the acdp is matched to acdp_id
-                    district_acdps=district_acdps[district_acdps['acdp_id'] != acdp_id]
                     # get all selected sectors by seed_id                    
-                    selected_sectors=sectors_by_seeds.loc[sectors_by_seeds['seed_id'].isin(selected_sectors['seed_id'])]
-                    # remove all sectors by seed_id
-                    sectors_by_seeds=sectors_by_seeds.loc[~sectors_by_seeds['seed_id'].isin(selected_sectors['seed_id'])]
-                    # rebuild the acdp and selected sector list
-                    acdps, selected_sectors=self.__build_acdps_by_sectors(selected_sectors=selected_sectors, acdp_id=acdp_id)
-                    district_acdps = gpd.GeoDataFrame(pd.concat([district_acdps, acdps], ignore_index=True)) if district_acdps is not None else acdps
-                    sectors_by_seeds = gpd.GeoDataFrame(pd.concat([sectors_by_seeds, selected_sectors], ignore_index=True)) if sectors_by_seeds is not None else selected_sectors
+                    selected_sectors=sectors_by_seeds.loc[sectors_by_seeds['seed_id'].isin(selected_sectors_aux['seed_id'])]
+                    # get all sectors that has the current acdp_id
+                    selected_sectors=selected_sectors[selected_sectors['acdp_id'] == acdp_id]
+                    if len(selected_sectors)>0:
+                        # remove the acdp is matched to acdp_id
+                        district_acdps=district_acdps[district_acdps['acdp_id'] != acdp_id]
+                        # remove all sectors by seed_id
+                        sectors_by_seeds=sectors_by_seeds.loc[~sectors_by_seeds['seed_id'].isin(selected_sectors['seed_id'])]
+                        # rebuild the acdp and selected sector list
+                        acdps, selected_sectors=self.__build_acdps_by_sectors(selected_sectors=selected_sectors, acdp_id=acdp_id)
+                        district_acdps = gpd.GeoDataFrame(pd.concat([district_acdps, acdps], ignore_index=True)) if district_acdps is not None else acdps
+                        sectors_by_seeds = gpd.GeoDataFrame(pd.concat([sectors_by_seeds, selected_sectors], ignore_index=True)) if sectors_by_seeds is not None else selected_sectors
 
         # set all outputs to the CRS from input
         sectors_by_seeds=sectors_by_seeds.set_crs(crs=CRS)
@@ -169,22 +173,22 @@ class SeedProcess():
         """
         candidate_sectors=changed_acdps=[]
         selected_sectors=None
+        #return selected_sectors, sectors, changed_acdps
+
         for i, acdp in acdps.iterrows():
             if acdp['geometry'].geom_type=='MultiPolygon':
                 acdp=acdp.explode()
             if acdp['geometry'].geom_type=='Polygon':
-                holes=acdp['geometry'].interiors
-            if len(holes)>0:
-                for hole in holes:
-                    if not hole.is_empty:
-                        seed_id=acdp['seed_id']
-                        changed_acdps.append( acdp['acdp_id'] )
-                        hole_pol=hole.convex_hull
-                        df = {'seed_id': [seed_id], 'geometry': [hole_pol]}
-                        hole_gdf = gpd.GeoDataFrame(df, crs=sectors.crs)
-                        candidate_sectors = gpd.sjoin(sectors, hole_gdf, how='inner', predicate='intersects')
-                        if len(candidate_sectors)>0:
-                            selected_sectors, sectors=self.__move_selected_sectors(selected_sectors=selected_sectors, candidate_sectors=candidate_sectors, main_sectors=sectors)
+                exterior_ring=acdp['geometry'].exterior
+            if not exterior_ring.is_empty:
+                seed_id=acdp['seed_id']
+                exterior_pol=Polygon(exterior_ring)
+                df = {'seed_id': [seed_id], 'acdp_id': acdp['acdp_id'], 'geometry': [exterior_pol]}
+                exterior_gdf = gpd.GeoDataFrame(df, crs=sectors.crs)
+                candidate_sectors = gpd.sjoin(sectors, exterior_gdf, how='inner', predicate='covered_by')
+                if len(candidate_sectors)>0:
+                    changed_acdps.append( acdp['acdp_id'] )
+                    selected_sectors, sectors=self.__move_selected_sectors(selected_sectors=selected_sectors, candidate_sectors=candidate_sectors, main_sectors=sectors)
         
         return selected_sectors, sectors, changed_acdps
         
@@ -207,8 +211,6 @@ class SeedProcess():
         """
         Given the selected sectors by one district grouped by seed_id, uses the dissolve
         over the seed_id to build the ACDPS.
-
-        If acdp_id is given, its removed from main acdp list and put again after rebuild.
         """
 
         # dissolves the selected sectors
@@ -335,10 +337,10 @@ class SeedProcess():
         self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
         self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
 
-        self._output_orphans.to_file(filename=f"{path_file}/output_orphans.shp")
-        self._output_acdps.to_file(filename=f"{path_file}/output_acdps.shp")
-        self._output_sectors.to_file(filename=f"{path_file}/output_sectors_by_seed.shp")
-        self._output_seeds.to_file(filename=f"{path_file}/output_buffer_seeds.shp")
+        # self._output_orphans.to_file(filename=f"{path_file}/output_orphans.shp")
+        # self._output_acdps.to_file(filename=f"{path_file}/output_acdps.shp")
+        # self._output_sectors.to_file(filename=f"{path_file}/output_sectors_by_seed.shp")
+        # self._output_seeds.to_file(filename=f"{path_file}/output_buffer_seeds.shp")
 
     def execute(self):
         try:
@@ -355,6 +357,8 @@ class SeedProcess():
 
 # local test
 db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
-#sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", lower_limit=1000, district_code='355030879')
+# sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos",
+# lower_limit=1000, district_code='355030888')
+
 sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", lower_limit=1000)
 sp.execute()
