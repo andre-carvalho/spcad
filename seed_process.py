@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 from datetime import datetime
 from shapely.geometry import Polygon
 from alive_progress import alive_bar
+import os
 
 class SeedProcess():
     """
@@ -307,7 +308,7 @@ class SeedProcess():
         else:
             return self.__get_sectors_by_seed(seed=seed, sectors=sectors, buffer_value=buffer_value, selected_sectors=selected_sectors, district_acdps=district_acdps)
 
-    def join_sectors(self):
+    def __join_sectors(self):
 
         # load all district codes
         self.__load_district_codes()
@@ -329,24 +330,41 @@ class SeedProcess():
         
         # remove unused columns
         self._output_sectors.pop('index_right')
-        
-        path_file="/home/andre/Projects/SPCAD_Miguel/entrega-v1"
-        # store on database
-        self._output_orphans.to_postgis(name="output_orphans", schema="public", con=self._engine, if_exists='replace')
-        self._output_acdps.to_postgis(name="output_acdps", schema="public", con=self._engine, if_exists='replace')
-        self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
-        self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
 
-        # self._output_orphans.to_file(filename=f"{path_file}/output_orphans.shp")
-        # self._output_acdps.to_file(filename=f"{path_file}/output_acdps.shp")
-        # self._output_sectors.to_file(filename=f"{path_file}/output_sectors_by_seed.shp")
-        # self._output_seeds.to_file(filename=f"{path_file}/output_buffer_seeds.shp")
+
+    def __store_output_data(self, to_database=True, to_file=True):
+
+        if to_database:
+            # store on database
+            self._output_orphans.to_postgis(name="output_orphans", schema="public", con=self._engine, if_exists='replace')
+            self._output_acdps.to_postgis(name="output_acdps", schema="public", con=self._engine, if_exists='replace')
+            self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
+            self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
+
+        if to_file:
+            try:
+                path_file=os.path.realpath(os.path.dirname(__file__))
+                outdir=datetime.today().strftime('%Y%m%d')
+                path_file=f"{path_file}/{outdir}"
+                if not os.path.isdir(path_file):
+                    os.mkdir(path=path_file, mode=644)
+
+                self._output_orphans.to_file(filename=f"{path_file}/output_orphans.shp", if_exists='replace')
+                self._output_acdps.to_file(filename=f"{path_file}/output_acdps.shp", if_exists='replace')
+                self._output_sectors.to_file(filename=f"{path_file}/output_sectors_by_seed.shp", if_exists='replace')
+                self._output_seeds.to_file(filename=f"{path_file}/output_buffer_seeds.shp", if_exists='replace')
+
+            except Exception as e:
+                print('Error on write data to file')
+                print(e.__str__())
+                raise e
 
     def execute(self):
         try:
             print("Starting at: "+datetime.now().strftime("%d/%m/%YT%H:%M:%S"))
 
-            self.join_sectors()
+            self.__join_sectors()
+            self.__store_output_data()
 
             print("Finished in: "+datetime.now().strftime("%d/%m/%YT%H:%M:%S"))
 
