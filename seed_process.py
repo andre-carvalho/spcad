@@ -18,9 +18,10 @@ class SeedProcess():
         - district_table, the schema and name of District table;
 
     There are optional input parameters:
-        - buffer_step, the value to increase the seed influence area, in meters;
+        - buffer_step, the number of units used to increase the buffer around the seeds to make an ACDP. Based on input data projection;
         - percent_range, the value to apply over the limit_to_stop to accept agregation of sectors;
         - limit_to_stop, the reference value to finalize the sectoral aggregation of a seed influence area;
+        - lower_limit, the default limit used to join minor ACDPs to nearest neighbor;
         - district_code, the code of one district to test the output without build all data;
     """
 
@@ -43,6 +44,7 @@ class SeedProcess():
         self._output_acdps=None
         self._output_sectors=None
         self._output_seeds=None
+        self._acdp_id=0
 
     def __read_seeds_by_district(self, district_code):
         """
@@ -155,7 +157,7 @@ class SeedProcess():
                         # remove all sectors by seed_id
                         sectors_by_seeds=sectors_by_seeds.loc[~sectors_by_seeds['seed_id'].isin(selected_sectors['seed_id'])]
                         # rebuild the acdp and selected sector list
-                        acdps, selected_sectors=self.__build_acdps_by_sectors(selected_sectors=selected_sectors, acdp_id=acdp_id)
+                        acdps, selected_sectors=self.__build_acdp_by_sectors(selected_sectors=selected_sectors, acdp_id=acdp_id)
                         district_acdps = gpd.GeoDataFrame(pd.concat([district_acdps, acdps], ignore_index=True)) if district_acdps is not None else acdps
                         sectors_by_seeds = gpd.GeoDataFrame(pd.concat([sectors_by_seeds, selected_sectors], ignore_index=True)) if sectors_by_seeds is not None else selected_sectors
 
@@ -208,11 +210,15 @@ class SeedProcess():
         # remove the auxiliary selected sectors from remaining district sectors
         return selected_sectors, main_sectors.loc[~main_sectors['cd_setor'].isin(candidate_sectors['cd_setor'])]
 
-    def __build_acdps_by_sectors(self, selected_sectors, acdp_id):
+    def __build_acdp_by_sectors(self, selected_sectors, acdp_id=None):
         """
         Given the selected sectors by one district grouped by seed_id, uses the dissolve
-        over the seed_id to build the ACDPS.
+        over the seed_id to build one ACDP.
         """
+
+        if acdp_id is None:
+            # next id to new acdp
+            self._acdp_id=acdp_id=self._acdp_id+1
 
         # dissolves the selected sectors
         acdps=selected_sectors.dissolve(by='seed_id', sort=False,
@@ -300,9 +306,7 @@ class SeedProcess():
             seed['buffer_val'] = buffer_value
             seed['num_dom'] = total
 
-            # next id to new acdp
-            acdp_id=district_acdps['acdp_id'].max()+1 if district_acdps is not None else 0
-            acdps, selected_sectors=self.__build_acdps_by_sectors(selected_sectors=selected_sectors, acdp_id=acdp_id)
+            acdps, selected_sectors=self.__build_acdp_by_sectors(selected_sectors=selected_sectors)
 
             return acdps, selected_sectors, sectors, seed
         else:
@@ -347,7 +351,7 @@ class SeedProcess():
                 outdir=datetime.today().strftime('%Y%m%d')
                 path_file=f"{path_file}/{outdir}"
                 if not os.path.isdir(path_file):
-                    os.mkdir(path=path_file, mode=644)
+                    os.mkdir(path=path_file)
 
                 self._output_orphans.to_file(filename=f"{path_file}/output_orphans.shp", if_exists='replace')
                 self._output_acdps.to_file(filename=f"{path_file}/output_acdps.shp", if_exists='replace')
