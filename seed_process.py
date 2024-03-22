@@ -1,10 +1,11 @@
 import geopandas as gpd
 import pandas as pd
-from psycopg2 import connect
 from sqlalchemy import create_engine
 from datetime import datetime
 from shapely.geometry import Polygon
 from alive_progress import alive_bar
+import os
+from config import Config
 
 class SeedProcess():
     """
@@ -17,9 +18,10 @@ class SeedProcess():
         - district_table, the schema and name of District table;
 
     There are optional input parameters:
-        - buffer_step, the value to increase the seed influence area, in meters;
+        - buffer_step, the number of units used to increase the buffer around the seeds to make an ACDP. Based on input data projection;
         - percent_range, the value to apply over the limit_to_stop to accept agregation of sectors;
         - limit_to_stop, the reference value to finalize the sectoral aggregation of a seed influence area;
+        - lower_limit, the default limit used to join minor ACDPs to nearest neighbor;
         - district_code, the code of one district to test the output without build all data;
     """
 
@@ -38,58 +40,52 @@ class SeedProcess():
         self._limit_to_stop=limit_to_stop
         self._lower_limit=limit_to_stop*percent_range/100 if lower_limit is None else lower_limit
         self._upper_limit=limit_to_stop+limit_to_stop*percent_range/100
+        self._input_seeds=None
+        self._input_sectors=None
+        self._input_districts=None
+
         self._output_orphans=None
         self._output_acdps=None
         self._output_sectors=None
         self._output_seeds=None
+        self._acdp_id=0
 
     def __read_seeds_by_district(self, district_code):
         """
-        Get the seeds using one district code from database as GeoDataFrame.
+        Get the seeds using one district code from data as GeoDataFrame.
 
         Prerequisites:
-         - The name from "_seed_table" table must exist in the database and have data.
+         - Seeds as GeoDataFrame must be preloaded.
         """
-        sql = f"SELECT id as seed_id, geom as geometry FROM {self._seed_table} WHERE cd_dist='{district_code}' ORDER BY ordem::integer ASC"
-        return gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
-
-    def __exec_query(self, sql):
-        """
-        Fetch data from database from given query and package inside a list structure
-        """
-        some_list = {}
         try:
-            self._conn = connect(self._dburl)
-            cur = self._conn.cursor()
-            cur.execute(sql)
-            results=cur.fetchall()
-            some_list=list(results)
-            cur.close()
-        except Exception as e:
-            raise e
-        finally:
-            if not self._conn.closed:
-                self._conn.close()
+            if self._input_seeds is not None:
+                seeds=self._input_seeds[self._input_seeds['cd_dist'] == district_code]
+                # order by 'ordem'
+                seeds=seeds.sort_values(by=['ordem'], ascending=True)
+                # remove unused columns
+                seeds=seeds.drop(columns=['cd_dist','ordem'])
+                return seeds
         
-        return some_list
+        except Exception as e:
+            print('Error on read seeds from input data for one district code')
+            print(e.__str__())
+            raise e
 
     def __load_district_codes(self):
         """
-        Get all district codes from database as list.
+        Get all district codes from input data as list.
 
         Prerequisites:
-         - The name from "_district_table" table must exist in the database and have data.
+         - Districts as GeoDataFrame must be preloaded.
         """
         try:
-            self._districts = {}
-            where=""
-            if self._district_code is not None:
-                where=f"WHERE cd_dist='{self._district_code}'"
-            
-            sql = f"SELECT cd_dist FROM {self._district_table} {where}"
-
-            self._districts=self.__exec_query(sql)
-            
+            if self._input_districts is not None:
+                gdf_aux=self._input_districts
+                if self._district_code is not None:
+                    gdf_aux=self._input_districts[self._input_districts['cd_dist'] == self._district_code]
+                
+                return gdf_aux['cd_dist']
+                
         except Exception as e:
             print('Error on read district indentifiers')
             print(e.__str__())
@@ -97,15 +93,41 @@ class SeedProcess():
 
     def __get_sectors_by_district(self, district_code):
         """
-        Get all sectors given one district code from database as GeoDataFrame.
+        Get all sectors given one district code from data as GeoDataFrame.
 
         Prerequisites:
-         - The name from "_sector_table" table must exist in the database and have data.
+         - Sectors as GeoDataFrame must be preloaded.
         """
-        sql = f"""SELECT id as sec_id, cd_dist, cd_setor, cadastrad::integer as num_cad,
-        domicilios::integer as num_dom, geom as geometry FROM {self._sector_table} WHERE cd_dist='{district_code}'
+        try:
+            if self._input_sectors is not None:
+                return self._input_sectors[self._input_sectors['cd_dist'] == district_code]
+            
+        except Exception as e:
+            print('Error on read sectors from input data for one district code')
+            print(e.__str__())
+            raise e
+
+    def __get_output_dir(self):
         """
-        return gpd.GeoDataFrame.from_postgis(sql=sql, con=self._engine, geom_col='geometry')
+        Create an output directory based on the relative path where this script is called.
+        """
+        path_file=os.path.realpath(os.path.dirname(__file__))
+        datedir=datetime.today().strftime('%Y%m%d')
+        path_file=f"{path_file}/data/output/{datedir}"
+        if not os.path.isdir(path_file):
+            os.mkdir(path=path_file)
+        return path_file
+
+    def __get_input_dir(self):
+        """
+        Return an input directory based on the relative path where this script is called.
+        """
+        path_file=os.path.realpath(os.path.dirname(__file__))
+        path_file=f"{path_file}/data/input"
+        if os.path.isdir(path_file):
+            return path_file
+        else:
+            raise FileNotFoundError(f"We expected an input directory called /data/input/ in this location: {path_file}")
 
 
     def district_sectors_grouping(self, seeds, sectors):
@@ -154,7 +176,7 @@ class SeedProcess():
                         # remove all sectors by seed_id
                         sectors_by_seeds=sectors_by_seeds.loc[~sectors_by_seeds['seed_id'].isin(selected_sectors['seed_id'])]
                         # rebuild the acdp and selected sector list
-                        acdps, selected_sectors=self.__build_acdps_by_sectors(selected_sectors=selected_sectors, acdp_id=acdp_id)
+                        acdps, selected_sectors=self.__build_acdp_by_sectors(selected_sectors=selected_sectors, acdp_id=acdp_id)
                         district_acdps = gpd.GeoDataFrame(pd.concat([district_acdps, acdps], ignore_index=True)) if district_acdps is not None else acdps
                         sectors_by_seeds = gpd.GeoDataFrame(pd.concat([sectors_by_seeds, selected_sectors], ignore_index=True)) if sectors_by_seeds is not None else selected_sectors
 
@@ -207,11 +229,15 @@ class SeedProcess():
         # remove the auxiliary selected sectors from remaining district sectors
         return selected_sectors, main_sectors.loc[~main_sectors['cd_setor'].isin(candidate_sectors['cd_setor'])]
 
-    def __build_acdps_by_sectors(self, selected_sectors, acdp_id):
+    def __build_acdp_by_sectors(self, selected_sectors, acdp_id=None):
         """
         Given the selected sectors by one district grouped by seed_id, uses the dissolve
-        over the seed_id to build the ACDPS.
+        over the seed_id to build one ACDP.
         """
+
+        if acdp_id is None:
+            # next id to new acdp
+            self._acdp_id=acdp_id=self._acdp_id+1
 
         # dissolves the selected sectors
         acdps=selected_sectors.dissolve(by='seed_id', sort=False,
@@ -299,24 +325,22 @@ class SeedProcess():
             seed['buffer_val'] = buffer_value
             seed['num_dom'] = total
 
-            # next id to new acdp
-            acdp_id=district_acdps['acdp_id'].max()+1 if district_acdps is not None else 0
-            acdps, selected_sectors=self.__build_acdps_by_sectors(selected_sectors=selected_sectors, acdp_id=acdp_id)
+            acdps, selected_sectors=self.__build_acdp_by_sectors(selected_sectors=selected_sectors)
 
             return acdps, selected_sectors, sectors, seed
         else:
             return self.__get_sectors_by_seed(seed=seed, sectors=sectors, buffer_value=buffer_value, selected_sectors=selected_sectors, district_acdps=district_acdps)
 
-    def join_sectors(self):
+    def __join_sectors(self):
 
         # load all district codes
-        self.__load_district_codes()
+        districts = self.__load_district_codes()
 
-        with alive_bar(len(self._districts)) as bar:
-            for district_code in self._districts:
+        with alive_bar(len(districts)) as bar:
+            for district_code in districts:
                 # read the list of seeds given a district_code
-                district_seeds=self.__read_seeds_by_district(district_code=district_code[0])
-                district_sectors=self.__get_sectors_by_district(district_code=district_code[0])
+                district_seeds=self.__read_seeds_by_district(district_code=district_code)
+                district_sectors=self.__get_sectors_by_district(district_code=district_code)
                 # group sectors by seeds
                 sectors_by_seeds, circle_seeds, orphan_sectors, district_acdps = self.district_sectors_grouping(seeds=district_seeds, sectors=district_sectors)
 
@@ -329,24 +353,54 @@ class SeedProcess():
         
         # remove unused columns
         self._output_sectors.pop('index_right')
-        
-        path_file="/home/andre/Projects/SPCAD_Miguel/entrega-v1"
-        # store on database
-        self._output_orphans.to_postgis(name="output_orphans", schema="public", con=self._engine, if_exists='replace')
-        self._output_acdps.to_postgis(name="output_acdps", schema="public", con=self._engine, if_exists='replace')
-        self._output_sectors.to_postgis(name="output_sectors_by_seed", schema="public", con=self._engine, if_exists='replace')
-        self._output_seeds.to_postgis(name="output_buffer_seeds", schema="public", con=self._engine, if_exists='replace')
 
-        # self._output_orphans.to_file(filename=f"{path_file}/output_orphans.shp")
-        # self._output_acdps.to_file(filename=f"{path_file}/output_acdps.shp")
-        # self._output_sectors.to_file(filename=f"{path_file}/output_sectors_by_seed.shp")
-        # self._output_seeds.to_file(filename=f"{path_file}/output_buffer_seeds.shp")
+    def __load_input_data(self):
+
+        try:
+            input_dir=self.__get_input_dir()
+
+            self._input_districts=gpd.read_file(f"{input_dir}/{Config.input_file_districts}")
+            self._input_districts.rename(columns={'CD_DIST': 'cd_dist'}, inplace=True)
+            self._input_districts.drop(columns=['NM_DIST', 'NM_MACRO', 'NM_SUBPREF', 'CD_SUBPREF'], inplace=True)
+
+            self._input_sectors=gpd.read_file(f"{input_dir}/{Config.input_file_sectors}")
+            columns={'CD_DIST': 'cd_dist', 'CD_SETOR': 'cd_setor', 'Cadastrad': 'num_cad', 'Domicilios': 'num_dom'}
+            self._input_sectors.rename(columns=columns, inplace=True)
+            self._input_sectors.drop(columns=['NM_DIST', 'Populacao'], inplace=True)
+            
+            self._input_seeds=gpd.read_file(f"{input_dir}/{Config.input_file_seeds}")
+            self._input_seeds.rename(columns={'CD_DIST': 'cd_dist', 'ORDEM': 'ordem'}, inplace=True)
+            self._input_seeds.drop(columns=['CD_SETOR', 'NM_DIST', 'Cadastrad'], inplace=True)
+            self._input_seeds['ordem'] = self._input_seeds['ordem'].astype('int32')
+            self._input_seeds['seed_id'] = range(0, len(self._input_seeds))
+
+        except Exception as e:
+            print('Error on read data from file')
+            print(e.__str__())
+            raise e
+
+    def __store_output_data(self):
+
+        try:
+            output_dir=self.__get_output_dir()
+
+            self._output_orphans.to_file(filename=f"{output_dir}/output_orphans.shp", if_exists='replace')
+            self._output_acdps.to_file(filename=f"{output_dir}/output_acdps.shp", if_exists='replace')
+            self._output_sectors.to_file(filename=f"{output_dir}/output_sectors_by_seed.shp", if_exists='replace')
+            self._output_seeds.to_file(filename=f"{output_dir}/output_buffer_seeds.shp", if_exists='replace')
+
+        except Exception as e:
+            print('Error on write data to file')
+            print(e.__str__())
+            raise e
 
     def execute(self):
         try:
             print("Starting at: "+datetime.now().strftime("%d/%m/%YT%H:%M:%S"))
 
-            self.join_sectors()
+            self.__load_input_data()
+            self.__join_sectors()
+            self.__store_output_data()
 
             print("Finished in: "+datetime.now().strftime("%d/%m/%YT%H:%M:%S"))
 
