@@ -59,7 +59,12 @@ class SeedProcess():
         """
         try:
             if self._input_seeds is not None:
-                return self._input_seeds[self._input_seeds['cd_dist'] == district_code]
+                seeds=self._input_seeds[self._input_seeds['cd_dist'] == district_code]
+                # order by 'ordem'
+                seeds=seeds.sort_values(by=['ordem'], ascending=True)
+                # remove unused columns
+                seeds=seeds.drop(columns=['cd_dist','ordem'])
+                return seeds
         
         except Exception as e:
             print('Error on read seeds from input data for one district code')
@@ -334,8 +339,8 @@ class SeedProcess():
         with alive_bar(len(districts)) as bar:
             for district_code in districts:
                 # read the list of seeds given a district_code
-                district_seeds=self.__read_seeds_by_district(district_code=district_code[0])
-                district_sectors=self.__get_sectors_by_district(district_code=district_code[0])
+                district_seeds=self.__read_seeds_by_district(district_code=district_code)
+                district_sectors=self.__get_sectors_by_district(district_code=district_code)
                 # group sectors by seeds
                 sectors_by_seeds, circle_seeds, orphan_sectors, district_acdps = self.district_sectors_grouping(seeds=district_seeds, sectors=district_sectors)
 
@@ -356,20 +361,18 @@ class SeedProcess():
 
             self._input_districts=gpd.read_file(f"{input_dir}/{Config.input_file_districts}")
             self._input_districts.rename(columns={'CD_DIST': 'cd_dist'}, inplace=True)
-            self._input_districts.drop(['NM_DIST', 'NM_MACRO', 'NM_SUBPREF', 'CD_SUBPREF'], axis=1, inplace=True)
+            self._input_districts.drop(columns=['NM_DIST', 'NM_MACRO', 'NM_SUBPREF', 'CD_SUBPREF'], inplace=True)
 
             self._input_sectors=gpd.read_file(f"{input_dir}/{Config.input_file_sectors}")
             columns={'CD_DIST': 'cd_dist', 'CD_SETOR': 'cd_setor', 'Cadastrad': 'num_cad', 'Domicilios': 'num_dom'}
             self._input_sectors.rename(columns=columns, inplace=True)
-            self._input_sectors.drop(['NM_DIST', 'Populacao'], axis=1, inplace=True)
-            self._input_sectors['sec_id'] = range(0, len(self._input_sectors))
-            self._input_sectors.set_index('sec_id', inplace=True)
+            self._input_sectors.drop(columns=['NM_DIST', 'Populacao'], inplace=True)
             
             self._input_seeds=gpd.read_file(f"{input_dir}/{Config.input_file_seeds}")
-            self._input_seeds.rename(columns={'CD_DIST': 'cd_dist'}, inplace=True)
-            self._input_seeds.drop(['CD_SETOR', 'NM_DIST', 'ORDEM', 'Cadastrad'], axis=1, inplace=True)
+            self._input_seeds.rename(columns={'CD_DIST': 'cd_dist', 'ORDEM': 'ordem'}, inplace=True)
+            self._input_seeds.drop(columns=['CD_SETOR', 'NM_DIST', 'Cadastrad'], inplace=True)
+            self._input_seeds['ordem'] = self._input_seeds['ordem'].astype('int32')
             self._input_seeds['seed_id'] = range(0, len(self._input_seeds))
-            self._input_seeds.set_index('seed_id', inplace=True)
 
         except Exception as e:
             print('Error on read data from file')
