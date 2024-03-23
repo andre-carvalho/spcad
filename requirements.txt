@@ -1,4 +1,2 @@
-psycopg2-binary
 geopandas
-geoalchemy2
 alive-progress

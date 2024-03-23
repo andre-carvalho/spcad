@@ -1,21 +1,14 @@
 import geopandas as gpd
 import pandas as pd
-from psycopg2 import connect
-from sqlalchemy import create_engine
 from datetime import datetime
 from shapely.geometry import Polygon
 from alive_progress import alive_bar
+from config import Config
 import os
 
 class SeedProcess():
     """
     Get seed points from database and process one by one.
-
-    There are mandatory input parameters:
-        - db_url, Postgres String connection;
-        - seed_table, the schema and name of Seed table;
-        - sector_table, the schema and name of Seed table;
-        - district_table, the schema and name of District table;
 
     There are optional input parameters:
         - buffer_step, the number of units used to increase the buffer around the seeds to make an ACDP. Based on input data projection;
@@ -25,14 +18,8 @@ class SeedProcess():
         - district_code, the code of one district to test the output without build all data;
     """
 
-    def __init__(self, db_url, seed_table, sector_table, district_table,
-                 buffer_step=5, percent_range=10, limit_to_stop=5000, lower_limit=None, district_code=None):
+    def __init__(self, buffer_step=5, percent_range=10, limit_to_stop=5000, lower_limit=None, district_code=None):
 
-        self._dburl = db_url
-        self._engine = create_engine(db_url)
-        self._seed_table = seed_table
-        self._sector_table = sector_table
-        self._district_table = district_table
         self._district_code = district_code
 
         self._buffer_to_dissolve=0.5
@@ -376,11 +363,3 @@ class SeedProcess():
             print('Error on seed process')
             print(e.__str__())
             raise e
-
-# local test
-db='postgresql://postgres:postgres@localhost:5432/spcad_miguel'
-# sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos",
-# lower_limit=1000, district_code='355030888')
-
-sp = SeedProcess(db_url=db, seed_table="public.sementes_pts", sector_table="public.setores_censitarios", district_table="public.distritos", lower_limit=1000)
-sp.execute()
