@@ -21,6 +21,13 @@ The algorithm is used to discover the best buffer for each seed, obtain sectors 
 
 ## Build the environment to run
 
+### Into Google Colab
+
+https://colab.research.google.com/drive/1ykl3izZ20EROJIEQC1DYzh4b2BEvoJJj#scrollTo=W7j5TZ5FAqyU
+
+
+### Into localhost
+
 Here is described how to build the environment to run this algorithm.
 
 Prerequisites:
@@ -34,7 +41,7 @@ After all prerequisites is read, you can run the script using the command below:
 python seed_process.py
 ```
 
-### Data Location
+#### Data Location
 
 To work, the algorithm expects the following directory organization.
 
@@ -59,16 +66,16 @@ After that, make the new directory called **data** and inside it, make two more 
       output/<where the output shapefiles will be written after running the script>
 ```
 
-### Python Environment
+#### Python Environment
 
 How to install Python and dependencies on local machine.
 
-#### Install the Python 3.10.x language interpreter.
+ 1. Install the Python 3.10.x language interpreter.
 
 You can following instructions by https://realpython.com/installing-python/ 
 or https://docs.python.org/3/using/index.html to install the Python language interpreter on your system platform.
 
-#### Install dependencies from requiremets.
+ 2. Install dependencies from requiremets.
 
 With Python installed, use the Package Installer for Python (pip) to install the required dependencies listed in the requirements.txt file.
 
@@ -76,7 +83,7 @@ With Python installed, use the Package Installer for Python (pip) to install the
 pip install -r requirements.txt
 ```
 
-### Input data metadata
+#### Input data metadata
 
 In this version of the algorithm, the column names must be the same as described here.
 
@@ -96,7 +103,7 @@ The Seed column description<br/>
 </p>
 
 
-### Configuration
+#### Configuration
 
 The configuration must be reviewed before run the script and is performed by editing the config.py file.
 
