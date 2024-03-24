@@ -38,7 +38,7 @@ Prerequisites:
 
 After all prerequisites is read, you can run the script using the command below:
 ```sh
-python seed_process.py
+python start.py
 ```
 
 #### Data Location
