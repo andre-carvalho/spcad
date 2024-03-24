@@ -100,10 +100,10 @@ class SeedProcess():
         Create an output directory based on the relative path where this script is called.
         """
         path_file=os.path.realpath(os.path.dirname(__file__))
-        datedir=datetime.today().strftime('%Y%m%d')
-        path_file=f"{path_file}/data/output/{datedir}"
+        datedir=datetime.today().strftime('%Y%m%d%H%M')
+        path_file=f"{path_file}{os.sep}data{os.sep}output{os.sep}{datedir}"
         if not os.path.isdir(path_file):
-            os.mkdir(path=path_file)
+            os.makedirs(path=path_file, exist_ok=True)
         return path_file
 
     def __get_input_dir(self):
@@ -111,11 +111,11 @@ class SeedProcess():
         Return an input directory based on the relative path where this script is called.
         """
         path_file=os.path.realpath(os.path.dirname(__file__))
-        path_file=f"{path_file}/data/input"
+        path_file=f"{path_file}{os.sep}data{os.sep}input"
         if os.path.isdir(path_file):
             return path_file
         else:
-            raise FileNotFoundError(f"We expected an input directory called /data/input/ in this location: {path_file}")
+            raise FileNotFoundError(f"We expected an input directory called {os.sep}data{os.sep}input{os.sep} in this location: {path_file}")
 
 
     def district_sectors_grouping(self, seeds, sectors):
@@ -347,16 +347,16 @@ class SeedProcess():
         try:
             input_dir=self.__get_input_dir()
 
-            self._input_districts=gpd.read_file(f"{input_dir}/{Config.input_file_districts}")
+            self._input_districts=gpd.read_file(f"{input_dir}{os.sep}{Config.input_file_districts}")
             self._input_districts.rename(columns={'CD_DIST': 'cd_dist'}, inplace=True)
             self._input_districts.drop(columns=['NM_DIST', 'NM_MACRO', 'NM_SUBPREF', 'CD_SUBPREF'], inplace=True)
 
-            self._input_sectors=gpd.read_file(f"{input_dir}/{Config.input_file_sectors}")
+            self._input_sectors=gpd.read_file(f"{input_dir}{os.sep}{Config.input_file_sectors}")
             columns={'CD_DIST': 'cd_dist', 'CD_SETOR': 'cd_setor', 'Cadastrad': 'num_cad', 'Domicilios': 'num_dom'}
             self._input_sectors.rename(columns=columns, inplace=True)
             self._input_sectors.drop(columns=['NM_DIST', 'Populacao'], inplace=True)
             
-            self._input_seeds=gpd.read_file(f"{input_dir}/{Config.input_file_seeds}")
+            self._input_seeds=gpd.read_file(f"{input_dir}{os.sep}{Config.input_file_seeds}")
             self._input_seeds.rename(columns={'CD_DIST': 'cd_dist', 'ORDEM': 'ordem'}, inplace=True)
             self._input_seeds.drop(columns=['CD_SETOR', 'NM_DIST', 'Cadastrad'], inplace=True)
             self._input_seeds['ordem'] = self._input_seeds['ordem'].astype('int32')
@@ -372,10 +372,10 @@ class SeedProcess():
         try:
             output_dir=self.__get_output_dir()
 
-            self._output_orphans.to_file(filename=f"{output_dir}/output_orphans.shp", if_exists='replace')
-            self._output_acdps.to_file(filename=f"{output_dir}/output_acdps.shp", if_exists='replace')
-            self._output_sectors.to_file(filename=f"{output_dir}/output_sectors_by_seed.shp", if_exists='replace')
-            self._output_seeds.to_file(filename=f"{output_dir}/output_buffer_seeds.shp", if_exists='replace')
+            self._output_orphans.to_file(filename=f"{output_dir}{os.sep}output_orphans.shp", if_exists='replace')
+            self._output_acdps.to_file(filename=f"{output_dir}{os.sep}output_acdps.shp", if_exists='replace')
+            self._output_sectors.to_file(filename=f"{output_dir}{os.sep}output_sectors_by_seed.shp", if_exists='replace')
+            self._output_seeds.to_file(filename=f"{output_dir}{os.sep}output_buffer_seeds.shp", if_exists='replace')
 
         except Exception as e:
             print('Error on write data to file')
