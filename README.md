@@ -23,7 +23,11 @@ The algorithm is used to discover the best buffer for each seed, obtain sectors 
 
 ### Into Google Colab
 
-https://colab.research.google.com/drive/1ykl3izZ20EROJIEQC1DYzh4b2BEvoJJj#scrollTo=W7j5TZ5FAqyU
+You can test the code in the Google Colab environment as an option, instead of creating and configuring your own environment.
+
+Use my "docs/spcad.ipynb" file to create your own Colab using the "Upload notebook file" option.
+
+https://colab.research.google.com/
 
 
 ### Into localhost
@@ -45,7 +49,7 @@ python start.py
 
 To work, the algorithm expects the following directory organization.
 
-Somewhere on your machine, paste the files from this repository. An alternative is to download the zip package [of a Release](https://github.com/andre-carvalho/spcad/releases) and unzip it into the desired directory.
+Somewhere on your machine, paste the files from this repository. An alternative is to download the zip package [of a Release](https://github.com/andre-carvalho/spcad/releases) and unzip it into the desired directory. Other way is clone this GIT repository into the desired directory.
 
 After that, make the new directory called **data** and inside it, make two more directories called **input** and **output**, so we have this structure:
 
@@ -103,6 +107,52 @@ The Seed column description<br/>
 </p>
 
 
+#### Output data
+
+The main output data is an ACDPS file with geometry and attributes. The name of this file and the other outputs are defined and can be changed in config.py as follows:
+
+```python
+    # used as name of output shapefiles when writing processed data.
+    output_file_acdps="acdps"
+    output_file_sectors="sectors_by_seed"
+    output_file_seeds="buffer_around_seeds"
+    output_file_orphans="orphan_sectors"
+```
+
+ - "output_file_acdps", contain the polygons of the area of each ACDPS found by the algorithm after the buffer search in the seeds and aggregation. Use sector dissolves.
+
+   * acdp_id: numerical sequence to identify each unit;
+   * seed_id: identifier of the seed used in the search;
+   * n_sectors: number of sectors found and used in acdps aggregation;
+   * cd_sectors: list of sector codes used in acdps aggregation;
+   * cd_dist: original district code;
+   * area_m2: area in square meters of the acdps;
+   * num_dom: total sum of households from the aggregated sectors;
+
+ - "output_file_sectors", contain the sectors selected by each buffer in the acdps search process.
+
+   * sec_id: sector identifier of the loaded input data in memory;
+   * cd_dist: original district code;
+   * cd_setor: original sector code;
+   * num_cad: original number of registered people in the sector;
+   * num_dom: original number of households in the sector;
+   * seed_id: seed identifier of the loaded input data in memory;
+   * acdp_id: numeric sequence to identify each acdps. It is associated with "output_file_acdps";
+
+ - "output_file_seeds", contain the circles that correspond to the final buffer applied to the seeds in the acdps search process.
+
+   * seed_id: identifier of the seed used to form the circle;
+   * buffer_val: final value of the buffer applied to the seed;
+   * num_dom: total sum of households from the sectors selected by the buffer;
+
+ - "output_file_orphans", contain the sectors that were orphaned after the acdps search process.
+
+   * sec_id: sector identifier of the loaded input data in memory;
+   * cd_dist: original district code;
+   * cd_setor: original sector code;
+   * num_cad: original number of registered people in the sector;
+   * num_dom: original number of households in the sector;
+
 #### Configuration
 
 The configuration must be reviewed before run the script and is performed by editing the config.py file.
@@ -110,11 +160,55 @@ The configuration must be reviewed before run the script and is performed by edi
 So, open the config.py file using any text editor and adjust the parameter values as needed.
 To help, each parameter has a description on the line above.
 
-<p>
-The config.py content<br/>
-<img alt="The config.py content" src="docs/config.py.png" width="80%" height="80%"/>
-</p>
 
+The config.py content:
+```python
+class Config:
+
+    # used as name of input shapefiles when loading data into memory.
+    input_file_seeds="Sementes_pts.shp"
+    input_file_sectors="SetoresCensitarios.shp"
+    input_file_districts="Distritos.shp"
+    
+    # the default limit used to join minor ACDPs to nearest neighbor.
+    lower_limit=1000
+    # the number of units used to increase the buffer around the seeds to make an ACDP. Based on input data projection.
+    buffer_step=5
+    # the value to apply over the limit_to_stop to accept agregation of sectors.
+    percent_range=10
+    # the reference value to finalize the sectoral aggregation of a seed influence area
+    limit_to_stop=5000
+    # the type of output file used to store the results. Only supports OGR types for the version used in the environment.
+    # See the README instructions to choose a valid value.
+    output_type="gpkg"
+
+    # used as name of output shapefiles when writing processed data.
+    output_file_acdps="acdps"
+    output_file_sectors="sectors_by_seed"
+    output_file_seeds="buffer_around_seeds"
+    output_file_orphans="orphan_sectors"
+```
+
+
+**Type of Output file**
+
+To change the type of output file you can choose one of the drivers supported by the used libraries installed in your environment. To obtain the list of supported drivers, use the commands below, and choose an option that is reported as 'rw' or 'raw'.
+
+```sh
+(venv) user@hostname:~/Projects/spcad$ python
+Python 3.10.12 (main, Nov 20 2023, 15:14:05) [GCC 11.4.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import fiona
+>>> fiona.supported_drivers
+{'DXF': 'rw', 'CSV': 'raw', 'OpenFileGDB': 'raw', 'ESRIJSON': 'r', 'ESRI Shapefile': 'raw', 'FlatGeobuf': 'raw', 'GeoJSON': 'raw', 'GeoJSONSeq': 'raw', 'GPKG': 'raw', 'GML': 'rw', 'OGR_GMT': 'rw', 'GPX': 'rw', 'MapInfo File': 'raw', 'DGN': 'raw', 'S57': 'r', 'SQLite': 'raw', 'TopoJSON': 'r'}
+```
+
+In this version of the algorithm, the tested options are: 'ESRI Shapefile' and 'GPKG'
+
+Since shapefile is more limited than GeoPackage, the default for writing output data is GeoPackage.
+*For the column with a list of sector codes in the ACDPS output, the maximum length is 255 and the data is truncated.
+
+You can change to shapefile on config.py before run.
 
 ## Developer
 
