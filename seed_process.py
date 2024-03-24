@@ -103,7 +103,7 @@ class SeedProcess():
         datedir=datetime.today().strftime('%Y%m%d%H%M')
         path_file=f"{path_file}{os.sep}data{os.sep}output{os.sep}{datedir}"
         if not os.path.isdir(path_file):
-            os.makedirs(path=path_file, exist_ok=True)
+            os.makedirs(name=path_file, exist_ok=True)
         return path_file
 
     def __get_input_dir(self):
