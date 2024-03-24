@@ -197,13 +197,63 @@ class SeedProcess():
 
         return sectors_by_seeds, circle_seeds, orphan_sectors, district_acdps
     
+    def district_acdps_join(self, seeds, sectors, acdps):
+        """
+        Test whether there is any ACDPS where the total sum of households in the aggregated sectors is
+        less than or equal to the lower_limit.
+        Using the value of the ACDPS num_dom attribute to compare.
+        When any ACDPS has the smallest num_dom value, it will be joined to a nearest neighboring ACDPS.
+
+        Parameters:
+            - seeds, all district seeds
+            - sectors, the sector list grouped by seed_id
+            - acdps, all ACDPS of one district
+        """
+        # get all acdps that has the num_dom is smaller than lower_limit
+        smallest_acdps=acdps[acdps['num_dom'] <= self._lower_limit]
+        
+        if len(smallest_acdps)>0:
+            # get seeds for smalls acdps
+            seeds_for_smallest=seeds.loc[seeds['seed_id'].isin(smallest_acdps['seed_id'])]
+            # get seeds for all acdps
+            acdps_seeds=seeds.loc[seeds['seed_id'].isin(acdps['seed_id'])]
+            # get only seeds that is not in smallest list
+            acdps_seeds=acdps_seeds.loc[~acdps_seeds['seed_id'].isin(seeds_for_smallest['seed_id'])]
+
+            for i, seed in seeds_for_smallest.iterrows():
+                small_acdps=smallest_acdps.loc[smallest_acdps['seed_id'] == seed['seed_id']]
+                acdps_seeds['distance']=acdps_seeds['geometry'].distance(seed['geometry'])
+                acdps_seeds.sort_values(by=['distance'], ascending=True, inplace=True)
+                nearest_acdps=acdps.loc[acdps['seed_id'] == (acdps_seeds.head(1)['seed_id']).iloc[0]]
+                # concat the small and nearest neighboring ACDPS into one GeoDataFrame
+                join_acdps = gpd.GeoDataFrame( pd.concat([small_acdps, nearest_acdps], ignore_index=True), crs=acdps.crs )
+                # dissolves two acdps
+                aggfunc={'num_dom': 'sum', 'n_sectors': 'sum', 'cd_dist': 'first'}
+                new_acdps=join_acdps.dissolve(by='cd_dist', sort=False, aggfunc=aggfunc)
+                new_acdps=gpd.GeoDataFrame(new_acdps, crs=acdps.crs)
+                new_acdps['area_m2']=round(new_acdps.area.iloc[0],2)
+                new_acdps['acdp_id']=nearest_acdps['acdp_id'].iloc[0]
+                new_acdps['seed_id']=nearest_acdps['seed_id'].iloc[0]
+                new_acdps['seed_ids']=f"{str(nearest_acdps['seed_id'].iloc[0])},{str(small_acdps['seed_id'].iloc[0])}"
+                new_acdps['cd_sectors']=f"{small_acdps['cd_sectors'].iloc[0]},{nearest_acdps['cd_sectors'].iloc[0]}"
+
+                # apply acdp_id and seed_id into selected sectors that compose this new acdps
+                sectors.loc[sectors['acdp_id'] == int(small_acdps['acdp_id'].iloc[0]), 'acdp_id'] =  nearest_acdps['acdp_id'].iloc[0]
+                sectors.loc[sectors['seed_id'] == int(small_acdps['seed_id'].iloc[0]), 'seed_id'] =  nearest_acdps['seed_id'].iloc[0]
+                # remove the acdps is matched to acdp_id
+                acdps=acdps[acdps['acdp_id'] != int(small_acdps['acdp_id'].iloc[0])]
+                acdps=acdps[acdps['acdp_id'] != int(nearest_acdps['acdp_id'].iloc[0])]
+                # push a new acdps into main acdps dataframe
+                acdps=gpd.GeoDataFrame(pd.concat([acdps, new_acdps], ignore_index=True), crs=acdps.crs)
+
+        return sectors, acdps
+
     def __put_sectors_in_holes(self, sectors, acdps):
         """
         Add some orphan sector into the ACDPs holes.
         """
         candidate_sectors=changed_acdps=[]
         selected_sectors=None
-        #return selected_sectors, sectors, changed_acdps
 
         for i, acdp in acdps.iterrows():
             if acdp['geometry'].geom_type=='MultiPolygon':
@@ -221,8 +271,6 @@ class SeedProcess():
                     selected_sectors, sectors=self.__move_selected_sectors(selected_sectors=selected_sectors, candidate_sectors=candidate_sectors, main_sectors=sectors)
         
         return selected_sectors, sectors, changed_acdps
-        
-
 
     def __move_selected_sectors(self, selected_sectors, candidate_sectors, main_sectors):
         """
@@ -259,6 +307,7 @@ class SeedProcess():
         acdps['area_m2']=round(acdps.area.iloc[0],2)
         acdps['cd_sectors']=','.join(selected_sectors['cd_setor'])
         acdps['acdp_id']=acdp_id
+        acdps['seed_ids']=f"{str(acdps['seed_id'].iloc[0])}"
         # apply acdp id to selected sectors that compose this acdp
         selected_sectors['acdp_id']=acdp_id
 
@@ -351,6 +400,8 @@ class SeedProcess():
                 district_sectors=self.__get_sectors_by_district(district_code=district_code)
                 # group sectors by seeds
                 sectors_by_seeds, circle_seeds, orphan_sectors, district_acdps = self.district_sectors_grouping(seeds=district_seeds, sectors=district_sectors)
+                # join smallest ACDPS into nearest neighbor using the lower_limit
+                sectors_by_seeds, district_acdps = self.district_acdps_join(seeds=district_seeds, sectors=sectors_by_seeds, acdps=district_acdps)
 
                 self._output_acdps = gpd.GeoDataFrame(pd.concat([self._output_acdps, district_acdps], ignore_index=True)) if self._output_acdps is not None else district_acdps
                 self._output_sectors = gpd.GeoDataFrame(pd.concat([self._output_sectors, sectors_by_seeds], ignore_index=True)) if self._output_sectors is not None else sectors_by_seeds
