@@ -1,11 +1,12 @@
 import geopandas as gpd
 import pandas as pd
+import fiona
 from datetime import datetime
 from shapely.geometry import Polygon
 from alive_progress import alive_bar
 from config import Config
 import os
-from config import Config
+
 
 class SeedProcess():
     """
@@ -36,6 +37,8 @@ class SeedProcess():
         self._output_acdps=None
         self._output_sectors=None
         self._output_seeds=None
+        # the extension output files. The keys must be the same drive name of fiona support.
+        self._output_extensions={'ESRI Shapefile':'shp','GPKG':'gpkg','GeoJSON':'json'}
         self._acdp_id=0
 
     def __read_seeds_by_district(self, district_code):
@@ -116,6 +119,23 @@ class SeedProcess():
             return path_file
         else:
             raise FileNotFoundError(f"We expected an input directory called {os.sep}data{os.sep}input{os.sep} in this location: {path_file}")
+
+    def __get_output_drivename(self):
+        """
+        Try validating and returning the fiona drive name to export the file based on the Config.output_type definition.
+        The available drives are the same as those supported by OGR used underneath via dependencies libraries.
+        """
+        ext=driver=None
+        drivers=fiona.supported_drivers
+        for dn in drivers:
+            if dn.lower() == Config.output_type.lower() and (drivers[dn] == 'raw' or drivers[dn] == 'rw'):
+                driver=dn
+                ext=self._output_extensions[dn]
+                break
+        if driver is not None:
+            return ext, driver
+        else:
+            raise Exception('Output driver is not supported. Review the Config.output_type.')
 
 
     def district_sectors_grouping(self, seeds, sectors):
@@ -372,10 +392,12 @@ class SeedProcess():
         try:
             output_dir=self.__get_output_dir()
 
-            self._output_orphans.to_file(filename=f"{output_dir}{os.sep}output_orphans.shp", if_exists='replace')
-            self._output_acdps.to_file(filename=f"{output_dir}{os.sep}output_acdps.shp", if_exists='replace')
-            self._output_sectors.to_file(filename=f"{output_dir}{os.sep}output_sectors_by_seed.shp", if_exists='replace')
-            self._output_seeds.to_file(filename=f"{output_dir}{os.sep}output_buffer_seeds.shp", if_exists='replace')
+            extension, output_drive=self.__get_output_drivename()
+
+            self._output_orphans.to_file(filename=f"{output_dir}{os.sep}output_orphans.{extension}", driver=output_drive, if_exists='replace')
+            self._output_acdps.to_file(filename=f"{output_dir}{os.sep}output_acdps.{extension}", driver=output_drive, if_exists='replace')
+            self._output_sectors.to_file(filename=f"{output_dir}{os.sep}output_sectors_by_seed.{extension}", driver=output_drive, if_exists='replace')
+            self._output_seeds.to_file(filename=f"{output_dir}{os.sep}output_buffer_seeds.{extension}", driver=output_drive, if_exists='replace')
 
         except Exception as e:
             print('Error on write data to file')

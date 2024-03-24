@@ -13,9 +13,12 @@ class Config:
     percent_range=10
     # the reference value to finalize the sectoral aggregation of a seed influence area
     limit_to_stop=5000
+    # the type of output file used to store the results. Only supports OGR types for the version used in the environment.
+    # See the README instructions to choose a valid value.
+    output_type="gpkg"
 
     # used as name of output shapefiles when writing processed data.
-    output_file_acdps="acdps.shp"
-    output_file_sectors="sectors_by_seed.shp"
-    output_file_seeds="buffer_around_seeds.shp"
-    output_file_orphans="orphan_sectors.shp"
+    output_file_acdps="acdps"
+    output_file_sectors="sectors_by_seed"
+    output_file_seeds="buffer_around_seeds"
+    output_file_orphans="orphan_sectors"
