@@ -14,8 +14,8 @@ The algorithm is used to discover the best buffer for each seed, obtain sectors 
  - The reference value used to join an ACDPS area into another is 1000* as **lower threshold**;
  - The increase in the buffer in each seed is limited to the sum of the number of families in each sector fetched by the intersection between the buffer and the sectors, respecting the **upper limit**; 
  - The sectors fetched by the intersection need is contiguous to form an ACDPS area;
- - When an ACDPS area that has one or more holes needs to make the sectors that are below those holes join the ACDPS area to fill the respective holes;
- - When an ACDPS area is smaller than a **lower threshold**, this ACDPS needs to be aggregated with the nearest neighboring ACDPS. The proximity measure is based on the Seeds used to form the related ACDPS within the District.
+ - When an ACDPS area that has one or more holes needs to make the sectors that are below those holes join the ACDPS area to fill the respective holes. [Solved in v0.3.0](https://github.com/andre-carvalho/spcad/tree/v0.3.0);
+ - When an ACDPS area is smaller than a **lower threshold**, this ACDPS needs to be aggregated with the nearest neighboring ACDPS. The proximity measure is based on the Seeds used to form the related ACDPS within the District. [Solved in v0.4.0](https://github.com/andre-carvalho/spcad/tree/v0.4.0);
 
 *The unit of values is the number of families in each Sector given by one of the Sector attributes.
 
@@ -29,6 +29,10 @@ Use my "docs/spcad.ipynb" file to create your own Colab using the "Upload notebo
 
 https://colab.research.google.com/
 
+To use a specific version of the algorithm, use Release packages. You can find a Colab-compatible Python notebook file for each version at "/docs/spcad_vx.y.z".
+
+ - [Release v0.3.0](/docs/spcad_v0_3_0.ipynb)
+ - [Release v0.4.0](docs/spcad_v0_4_0.ipynb)
 
 ### Into localhost
 
