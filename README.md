@@ -123,6 +123,7 @@ The main output data is an ACDPS file with geometry and attributes. The name of 
 
    * acdp_id: numerical sequence to identify each unit;
    * seed_id: identifier of the seed used in the search;
+   * seed_ids: A list of identifiers for the seed used in the search. Normally it has one seed_id but when we have any ACDPS with num_dom <= lower_limit and it joins a nearest neighbor, we have more than one seed_id in this list;
    * n_sectors: number of sectors found and used in acdps aggregation;
    * cd_sectors: list of sector codes used in acdps aggregation;
    * cd_dist: original district code;
