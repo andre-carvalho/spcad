@@ -1,6 +1,11 @@
 # SPCAD Project
 
-This code repository is part of the SPCAD Project and contains the Proof of Concept algorithm.
+This code repository is part of the [COVS/IMPDS](https://www.prefeitura.sp.gov.br/cidade/secretarias/assistencia_social/observatorio_socioassistencial/index.php) and contains the Proof of Concept algorithm.
+
+COVS - Coordenação do Observatório da Vigilância Socioassistencial
+IMPDS - Indíce Municipal de Proteção e Desproteção Socioassistencial das Famílias do CadÚnico
+
+[Tutorial Metodológico - Site.pdf](https://www.prefeitura.sp.gov.br/cidade/secretarias/upload/assistencia_social/COVS/2024/IMPDS/Tutorial%20Metodol%C3%B3gico%20-%20Site.pdf)
 
 ## Description
 
