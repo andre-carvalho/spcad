@@ -133,7 +133,8 @@ class MakeACDC():
         """
 
         # build centroid for all sectors (representative_point maybe)
-        sectors["centroid"] = sectors["geometry"].centroid
+        #sectors["centroid"] = sectors["geometry"].centroid
+        sectors["centroid"] = sectors["geometry"].representative_point()
         CRS=sectors.crs
         remaining_sectors=sectors
         district_acdcs=circle_sectors=None
@@ -142,8 +143,13 @@ class MakeACDC():
             # make a GeoDataFrame using centroid to apply buffer based on buffer_value
             df = {'centroid_id': [1], 'geometry': [centroid]}
             centroid_gdf = gpd.GeoDataFrame(df, crs=sectors.crs)
+            # reproject to SIRGAS 2000/Brazil Mercator https://epsg.io/5641
+            centroid_gdf = centroid_gdf.to_crs(5641)
             # apply a buffer to a centroid, in meters
             centroid_gdf['geometry'] = centroid_gdf.geometry.buffer(buffer_value)
+            # return to defaul CRS
+            centroid_gdf = centroid_gdf.to_crs(sectors.crs)
+
             candidate_sectors = gpd.sjoin(sectors, centroid_gdf, how='inner', predicate='intersects')
             if len(candidate_sectors)>0:
                 return candidate_sectors, centroid_gdf
@@ -154,8 +160,11 @@ class MakeACDC():
             """
             Rmove the selected sectors from the main sectors DataFrame.
             """
-            # remove the selected sectors from remaining district sectors
-            return main_sectors.loc[~main_sectors['cd_setor'].isin(selected_sectors['cd_setor'])]
+            if selected_sectors is not None:
+                # remove the selected sectors from remaining district sectors
+                return main_sectors.loc[~main_sectors['cd_setor'].isin(selected_sectors['cd_setor'])]
+            else:
+                return main_sectors
 
         def make_acdc(sectors):
             """
@@ -194,12 +203,14 @@ class MakeACDC():
 
         while len(remaining_sectors)>0:
             # get the first sector
-            a_sector = sectors.iloc[0]
+            a_sector = remaining_sectors.iloc[0]
             sectors_by_buffer, circle_buffer = get_sectors_by_buffer(centroid=a_sector['centroid'], sectors=remaining_sectors, buffer_value=self._default_buffer)
             
             # test if the selected sectors is only once, if yes, the selected is the same input
             if sectors_by_buffer is not None and len(sectors_by_buffer)>1:
                 acdc = make_acdc(sectors=sectors_by_buffer)
+                # update the centroid_id with the same as ACDC id
+                circle_buffer['centroid_id'] = acdc['acdc_id']
                 if len(acdc)>0:
                     district_acdcs = gpd.GeoDataFrame(pd.concat([district_acdcs, acdc], ignore_index=True)) if district_acdcs is not None else acdc
                     circle_sectors = gpd.GeoDataFrame(pd.concat([circle_sectors, circle_buffer], ignore_index=True)) if circle_sectors is not None else circle_buffer
