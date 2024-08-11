@@ -171,11 +171,10 @@ class MakeACDC():
             Given the selected sectors by one district grouped by seed_id, uses the dissolve
             over the seed_id to build one acdc.
             """
-            # next id to new acdc
-            self._acdc_id=acdc_id=self._acdc_id+1
-
+            acdc=None
             polygon_sectors=[]
             num_ben=num_cad=num_pes=num_dom=0
+
             for index, row in sectors.iterrows():
                 if row['num_ben']>=self._min_beneficiary:
                     polygon_sectors.append(row['geometry'])
@@ -184,20 +183,24 @@ class MakeACDC():
                     num_pes=num_pes+row['num_pes']
                     num_dom=num_dom+row['num_dom']
             
-            sector_multi = MultiPolygon(polygon_sectors)
-            df = {
-                'num_ben': num_ben,
-                'num_cad': num_cad,
-                'num_pes': num_pes,
-                'num_dom': num_dom,
-                'cd_dist': (sectors.iloc[0])['cd_dist'],
-                'cd_sectors': ','.join(sectors['cd_setor']),
-                'acdc_id': acdc_id,
-                'cod_sub': self.__get_subpref_code((sectors.iloc[0])['cd_dist']),
-                'geometry': [sector_multi]
-            }
-            
-            acdc=gpd.GeoDataFrame(df, crs=sectors.crs)
+            if len(polygon_sectors)>0:
+                # next id to new acdc
+                self._acdc_id=self._acdc_id+1
+
+                sector_multi = MultiPolygon(polygon_sectors)
+                df = {
+                    'num_ben': num_ben,
+                    'num_cad': num_cad,
+                    'num_pes': num_pes,
+                    'num_dom': num_dom,
+                    'cd_dist': (sectors.iloc[0])['cd_dist'],
+                    'cd_sectors': ','.join(sectors['cd_setor']),
+                    'acdc_id': self._acdc_id,
+                    'cod_sub': self.__get_subpref_code((sectors.iloc[0])['cd_dist']),
+                    'geometry': [sector_multi]
+                }
+                
+                acdc=gpd.GeoDataFrame(df, crs=sectors.crs)
 
             return acdc
 
@@ -209,9 +212,9 @@ class MakeACDC():
             # test if the selected sectors is only once, if yes, the selected is the same input
             if sectors_by_buffer is not None and len(sectors_by_buffer)>1:
                 acdc = make_acdc(sectors=sectors_by_buffer)
-                # update the centroid_id with the same as ACDC id
-                circle_buffer['centroid_id'] = acdc['acdc_id']
-                if len(acdc)>0:
+                if acdc is not None and len(acdc)>0:
+                    # update the centroid_id with the same as last ACDC id
+                    circle_buffer['centroid_id'] = self._acdc_id
                     district_acdcs = gpd.GeoDataFrame(pd.concat([district_acdcs, acdc], ignore_index=True)) if district_acdcs is not None else acdc
                     circle_sectors = gpd.GeoDataFrame(pd.concat([circle_sectors, circle_buffer], ignore_index=True)) if circle_sectors is not None else circle_buffer
             
@@ -221,8 +224,10 @@ class MakeACDC():
             if len(remaining_sectors)==0: break
 
         # set all outputs to the CRS from input
-        circle_sectors=circle_sectors.set_crs(crs=CRS)
-        district_acdcs=district_acdcs.set_crs(crs=CRS)
+        if circle_sectors is not None and len(circle_sectors)>0:
+            circle_sectors=circle_sectors.set_crs(crs=CRS)
+        if district_acdcs is not None and len(district_acdcs)>0:
+            district_acdcs=district_acdcs.set_crs(crs=CRS)
 
         return circle_sectors, district_acdcs
 
