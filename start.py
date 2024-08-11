@@ -1,4 +1,4 @@
-from seed_process import SeedProcess
+from make_acdc import MakeACDC
 
-sp = SeedProcess(lower_limit=1000)
+sp = MakeACDC(district_code='355030855')
 sp.execute()
